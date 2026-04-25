@@ -380,6 +380,42 @@ export const App = () => {
     });
   };
 
+  const handleSetFontFamily = (fontFamily: string) => {
+    if (!editingNodeId) {
+      return;
+    }
+
+    setEditorCommand({
+      type: "set-font-family",
+      fontFamily,
+      nonce: editorCommandNonceRef.current++,
+    });
+  };
+
+  const handleSetTextColor = (color: string) => {
+    if (!editingNodeId) {
+      return;
+    }
+
+    setEditorCommand({
+      type: "set-text-color",
+      color,
+      nonce: editorCommandNonceRef.current++,
+    });
+  };
+
+  const handleSetHighlightColor = (color: string) => {
+    if (!editingNodeId) {
+      return;
+    }
+
+    setEditorCommand({
+      type: "set-highlight-color",
+      color,
+      nonce: editorCommandNonceRef.current++,
+    });
+  };
+
   const handleZoomChange = (zoom: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) {
@@ -874,10 +910,19 @@ export const App = () => {
   }, [documentFile, interaction]);
 
   const startNodeDrag = (
-    event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation">,
+    event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation"> & { button?: number },
     node: CanvasNode,
   ) => {
-    if (editingNodeId === node.id) {
+    if (event.button === 1) {
+      event.stopPropagation();
+      event.preventDefault();
+      setInteraction({
+        type: "pan",
+        startX: event.clientX,
+        startY: event.clientY,
+        initialX: documentFile.viewState.cameraX,
+        initialY: documentFile.viewState.cameraY,
+      });
       return;
     }
 
@@ -923,6 +968,20 @@ export const App = () => {
     });
   };
 
+  const startCanvasPan = (
+    event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation">,
+  ) => {
+    event.stopPropagation();
+    event.preventDefault();
+    setInteraction({
+      type: "pan",
+      startX: event.clientX,
+      startY: event.clientY,
+      initialX: documentFile.viewState.cameraX,
+      initialY: documentFile.viewState.cameraY,
+    });
+  };
+
   return (
     <div className="app-shell">
       <Toolbar
@@ -930,6 +989,7 @@ export const App = () => {
         dirty={isDirty}
         canInsertTable={editingNodeId !== null || !!selectedTextNode}
         canInsertTableColumn={editingNodeId !== null}
+        canFormatText={editingNodeId !== null}
         onNew={handleNewDocument}
         onOpen={handleOpenClick}
         onSave={handleSave}
@@ -939,6 +999,9 @@ export const App = () => {
         onInsertTableColumn={handleInsertTableColumn}
         onInsertTableColumnLeft={handleInsertTableColumnLeft}
         onDeleteTableColumn={handleDeleteTableColumn}
+        onSetFontFamily={handleSetFontFamily}
+        onSetTextColor={handleSetTextColor}
+        onSetHighlightColor={handleSetHighlightColor}
         onZoomChange={handleZoomChange}
       />
 
@@ -1050,14 +1113,7 @@ export const App = () => {
             return;
           }
 
-          event.preventDefault();
-          setInteraction({
-            type: "pan",
-            startX: event.clientX,
-            startY: event.clientY,
-            initialX: documentFile.viewState.cameraX,
-            initialY: documentFile.viewState.cameraY,
-          });
+          startCanvasPan(event);
         }}
         onAuxClick={(event) => {
           if (event.button === 1) {
@@ -1173,6 +1229,7 @@ export const App = () => {
                       );
                     }}
                     onDragHandlePointerDown={(event) => startNodeDrag(event, node)}
+                    onMiddlePanPointerDown={startCanvasPan}
                     onResizePointerDown={(event, handle) => startResize(event, node, handle)}
                   />
                 );

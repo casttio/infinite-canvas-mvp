@@ -14,6 +14,9 @@ const richTextInlineSchema = z.discriminatedUnion("type", [
     type: z.literal("text"),
     text: z.string(),
     marks: z.array(z.enum(["bold", "italic"])).optional(),
+    fontFamily: z.string().min(1).optional(),
+    color: z.string().min(1).optional(),
+    highlightColor: z.string().min(1).optional(),
   }).catchall(z.unknown()),
   z.object({
     type: z.literal("break"),

@@ -7,6 +7,7 @@ import type {
   RichTextTable,
   RichTextTableCell,
 } from "../model/types";
+import { normalizeRichTextDoc } from "../model/normalize";
 
 const escapeHtml = (value: string) =>
   value
@@ -20,6 +21,13 @@ const createEmptyParagraph = (): RichTextParagraph => ({
   type: "paragraph",
   content: [{ type: "text", text: "" }],
 });
+
+const EMPTY_PARAGRAPH_BLOCK_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
+
+export const wrapTableCellContentHtml = (innerHtml = EMPTY_PARAGRAPH_BLOCK_HTML) =>
+  `<div class="text-block-table-cell-content">${innerHtml}</div>`;
+
+export const createEmptyTableCellHtml = () => `<td>${wrapTableCellContentHtml()}</td>`;
 
 const ensureParagraphContent = (content: RichTextInline[]): RichTextInline[] =>
   content.length > 0 ? content : [{ type: "text", text: "" }];
@@ -39,6 +47,41 @@ const wrapMarks = (text: string, marks: Array<"bold" | "italic"> = []) => {
 
     return result;
   }, text);
+};
+
+const normalizeInlineStyleValue = (value: string | null | undefined) => {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeHighlightColor = (value: string | null | undefined) => {
+  const normalized = normalizeInlineStyleValue(value)?.toLowerCase();
+  if (!normalized || normalized === "transparent" || normalized === "rgba(0, 0, 0, 0)" || normalized === "rgba(0,0,0,0)") {
+    return undefined;
+  }
+
+  return normalized;
+};
+
+const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type: "text" }>) => {
+  const styleEntries = [
+    inline.fontFamily ? `font-family: ${escapeAttribute(inline.fontFamily)};` : "",
+    inline.color ? `color: ${escapeAttribute(inline.color)};` : "",
+    inline.highlightColor ? `background-color: ${escapeAttribute(inline.highlightColor)};` : "",
+  ].filter(Boolean);
+
+  if (styleEntries.length === 0) {
+    return content;
+  }
+
+  const attributes = [
+    inline.fontFamily ? `data-font-family="${escapeAttribute(inline.fontFamily)}"` : "",
+    inline.color ? `data-text-color="${escapeAttribute(inline.color)}"` : "",
+    inline.highlightColor ? `data-highlight-color="${escapeAttribute(inline.highlightColor)}"` : "",
+    `style="${styleEntries.join(" ")}"`,
+  ].filter(Boolean).join(" ");
+
+  return `<span ${attributes}>${content}</span>`;
 };
 
 const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}) => {
@@ -61,7 +104,7 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}) => {
     return `<span class="text-inline-image-frame" contenteditable="false" data-asset-id="${escapeAttribute(inline.assetId)}" ${sizeAttributes}><img src="${escapeAttribute(asset.data)}" alt="${escapeAttribute(asset.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span></span>`;
   }
 
-  return wrapMarks(escapeHtml(inline.text), inline.marks);
+  return wrapInlineStyle(wrapMarks(escapeHtml(inline.text), inline.marks), inline);
 };
 
 const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}): string =>
@@ -72,12 +115,12 @@ const tableCellToHtml = (
   assets: AssetMap = {},
   tableDepth = 0,
 ): string =>
-  `<td><div class="text-block-table-cell-content">${blocksToHtml(ensureBlocks(cell.content), assets, tableDepth)}</div></td>`;
+  `<td>${wrapTableCellContentHtml(blocksToHtml(ensureBlocks(cell.content), assets, tableDepth))}</td>`;
 
 const tableToHtml = (table: RichTextTable, assets: AssetMap = {}, tableDepth = 0): string => {
   const columnWidths = Array.isArray(table.colWidths) ? table.colWidths.filter((width) => Number.isFinite(width) && width > 0) : [];
   const totalColumnWidth = columnWidths.reduce((sum, width) => sum + width, 0);
-  const wrapperWidth = table.w ?? (totalColumnWidth > 0 ? totalColumnWidth : undefined);
+  const wrapperWidth = totalColumnWidth > 0 ? totalColumnWidth : table.w;
   const widthAttributes = [
     wrapperWidth ? `data-w="${wrapperWidth}"` : "",
     wrapperWidth ? `style="width: ${wrapperWidth}px;"` : "",
@@ -88,7 +131,7 @@ const tableToHtml = (table: RichTextTable, assets: AssetMap = {}, tableDepth = 0
     ? `<colgroup>${columnWidths.map((width) => `<col style="width: ${width}px;" />`).join("")}</colgroup>`
     : "";
 
-  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${colGroup}<tbody>${table.rows.map((row) => `<tr>${row.cells.map((cell) => tableCellToHtml(cell, assets, tableDepth + 1)).join("")}</tr>`).join("")}</tbody></table><span class="text-block-table-resize" contenteditable="false" data-table-resize-handle="true"></span></div>`;
+  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${colGroup}<tbody>${table.rows.map((row) => `<tr>${row.cells.map((cell) => tableCellToHtml(cell, assets, tableDepth + 1)).join("")}</tr>`).join("")}</tbody></table></div>`;
 };
 
 const blockToHtml = (block: RichTextBlock, assets: AssetMap = {}, tableDepth = 0): string => {
@@ -103,20 +146,20 @@ const blocksToHtml = (blocks: RichTextBlock[], assets: AssetMap = {}, tableDepth
   blocks.map((block) => blockToHtml(block, assets, tableDepth)).join("");
 
 export const createRichTextTableHtml = (rows = 2, columns = 2) =>
-  `<div class="text-block text-block-table-wrap" data-block-kind="table"><table class="text-block-table"><tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => "<td><p><br /></p></td>").join("")}</tr>`).join("")}</tbody></table><span class="text-block-table-resize" contenteditable="false" data-table-resize-handle="true"></span></div>`;
+  `<div class="text-block text-block-table-wrap" data-block-kind="table"><table class="text-block-table"><tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => createEmptyTableCellHtml()).join("")}</tr>`).join("")}</tbody></table></div>`;
 
 export const wrapRichTextTableHtml = (tableInnerHtml: string, options?: { width?: number; colWidths?: number[] }) => {
   const colWidths = Array.isArray(options?.colWidths)
     ? options.colWidths.filter((width) => Number.isFinite(width) && width > 0)
     : [];
-  const wrapperWidth = options?.width ?? (colWidths.length > 0 ? colWidths.reduce((sum, width) => sum + width, 0) : undefined);
+  const wrapperWidth = colWidths.length > 0 ? colWidths.reduce((sum, width) => sum + width, 0) : options?.width;
   const widthAttributes = [
     wrapperWidth ? `data-w="${wrapperWidth}"` : "",
     wrapperWidth ? `style="width: ${wrapperWidth}px;"` : "",
     colWidths.length > 0 ? `data-col-widths="${colWidths.join(",")}"` : "",
   ].filter(Boolean).join(" ");
 
-  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${tableInnerHtml}</table><span class="text-block-table-resize" contenteditable="false" data-table-resize-handle="true"></span></div>`;
+  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${tableInnerHtml}</table></div>`;
 };
 
 export const richTextDocToHtml = (doc: RichTextDoc, assets: AssetMap = {}) =>
@@ -140,6 +183,54 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic"> = []) =
   return nextMarks;
 };
 
+const readInlineStyle = (element: Node | null) => {
+  let current = element;
+  let fontFamily: string | undefined;
+  let color: string | undefined;
+  let highlightColor: string | undefined;
+
+  while (current && current instanceof HTMLElement) {
+    if (!fontFamily) {
+      fontFamily = normalizeInlineStyleValue(
+        current.dataset.fontFamily
+        ?? current.style.fontFamily
+        ?? current.getAttribute("face"),
+      );
+    }
+
+    if (!color) {
+      color = normalizeInlineStyleValue(
+        current.dataset.textColor
+        ?? current.style.color
+        ?? current.getAttribute("color"),
+      );
+    }
+
+    if (!highlightColor) {
+      highlightColor = normalizeHighlightColor(
+        current.dataset.highlightColor
+        ?? current.style.backgroundColor,
+      );
+    }
+
+    if (
+      current.dataset.blockKind
+      || current.classList.contains("text-block-table-cell-content")
+      || current.tagName.toLowerCase() === "td"
+    ) {
+      break;
+    }
+
+    current = current.parentElement;
+  }
+
+  return {
+    ...(fontFamily ? { fontFamily } : {}),
+    ...(color ? { color } : {}),
+    ...(highlightColor ? { highlightColor } : {}),
+  };
+};
+
 const appendInlineNode = (node: Node, content: RichTextInline[]) => {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
@@ -148,6 +239,7 @@ const appendInlineNode = (node: Node, content: RichTextInline[]) => {
         type: "text",
         text,
         marks: readMarks(node.parentNode),
+        ...readInlineStyle(node.parentNode),
       });
     }
     return;
@@ -236,7 +328,7 @@ const getDirectTableRows = (table: HTMLTableElement) => {
   return rows;
 };
 
-const readTableColumnWidths = (wrapper: HTMLElement, table: HTMLTableElement) => {
+export const readTableColumnWidths = (wrapper: HTMLElement, table: HTMLTableElement) => {
   const explicitWidths = (wrapper.getAttribute("data-col-widths") ?? "")
     .split(",")
     .map((value) => Number(value.trim()))
@@ -335,8 +427,8 @@ export const htmlToRichTextDoc = (html: string): RichTextDoc => {
   const root = document.createElement("div");
   root.innerHTML = html;
 
-  return {
+  return normalizeRichTextDoc({
     type: "doc",
     content: parseBlocksFromNodes(Array.from(root.childNodes)),
-  };
+  });
 };

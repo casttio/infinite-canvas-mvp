@@ -6,7 +6,14 @@ import type {
 } from "react";
 import type { ResizeHandle } from "../editor/resize";
 import type { AssetMap, TextNode as TextNodeType } from "../model/types";
-import { createRichTextTableHtml, htmlToRichTextDoc, richTextDocToHtml, wrapRichTextTableHtml } from "./richText";
+import {
+  createRichTextTableHtml,
+  htmlToRichTextDoc,
+  readTableColumnWidths,
+  richTextDocToHtml,
+  wrapRichTextTableHtml,
+  wrapTableCellContentHtml,
+} from "./richText";
 
 const escapeAttribute = (value: string) =>
   value
@@ -22,10 +29,21 @@ const escapeHtml = (value: string) =>
     .replaceAll(">", "&gt;");
 
 export interface TextEditorCommand {
-  type: "insert-table" | "insert-table-column" | "insert-table-column-left" | "delete-table-column" | "insert-image" | "append-text";
+  type:
+    | "insert-table"
+    | "insert-table-column"
+    | "insert-table-column-left"
+    | "delete-table-column"
+    | "insert-image"
+    | "append-text"
+    | "set-font-family"
+    | "set-text-color"
+    | "set-highlight-color";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
+  fontFamily?: string;
+  color?: string;
   assetId?: string;
   name?: string;
   data?: string;
@@ -47,6 +65,7 @@ interface TextNodeProps {
   onAutoResize: (height: number) => void;
   onAutoResizeWidth: (width: number) => void;
   onDragHandlePointerDown: (event: PointerLikeEvent) => void;
+  onMiddlePanPointerDown: (event: PointerLikeEvent) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
 }
 
@@ -64,6 +83,15 @@ type EditorSelectionState =
       type: "block-range";
       startBlockIndex: number;
       endBlockIndex: number;
+    }
+  | {
+      type: "mixed-range";
+      startBlockIndex: number;
+      endBlockIndex: number;
+      startTableKey?: string;
+      startRow?: number;
+      endTableKey?: string;
+      endRow?: number;
     };
 
 type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation" | "altKey">;
@@ -88,10 +116,12 @@ export const TextNode = ({
   onAutoResize,
   onAutoResizeWidth,
   onDragHandlePointerDown,
+  onMiddlePanPointerDown,
   onResizePointerDown,
 }: TextNodeProps) => {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
+  const savedSelectionRangeRef = useRef<Range | null>(null);
   const pendingCaretPointRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredColumnCellRef = useRef<HTMLTableCellElement | null>(null);
   const hoveredTableWrapRef = useRef<HTMLElement | null>(null);
@@ -100,6 +130,7 @@ export const TextNode = ({
   const customClipboardRef = useRef<{ text: string; html: string } | null>(null);
   const pendingSelectionRef = useRef<{
     startBlockIndex: number;
+    startTopBlockIndex: number;
     startTableKey: string | null;
     startRow: number | null;
     startColumn: number | null;
@@ -109,6 +140,7 @@ export const TextNode = ({
   } | null>(null);
   const [selectionAnchor, setSelectionAnchor] = useState<{
     blockIndex: number;
+    topBlockIndex: number;
     tableKey: string | null;
     row: number | null;
     column: number | null;
@@ -181,24 +213,58 @@ export const TextNode = ({
     });
   };
 
-  const syncDimensionsToContent = () => {
+  const isSelectionInsideEditor = (selection: Selection | null) => {
+    const editor = editorRef.current;
+    if (!editor || !selection || selection.rangeCount === 0) {
+      return false;
+    }
+
+    return editor.contains(selection.anchorNode) && editor.contains(selection.focusNode);
+  };
+
+  const saveCurrentSelectionRange = () => {
+    const selection = window.getSelection();
+    if (!isSelectionInsideEditor(selection)) {
+      return false;
+    }
+
+    savedSelectionRangeRef.current = selection!.getRangeAt(0).cloneRange();
+    return true;
+  };
+
+  const restoreSavedSelectionRange = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || !savedSelectionRangeRef.current) {
+      return false;
+    }
+
+    editor.focus();
+    selection.removeAllRanges();
+    selection.addRange(savedSelectionRangeRef.current.cloneRange());
+    return true;
+  };
+
+  const syncDimensionsToContent = (options?: { expandTables?: boolean }) => {
     if (!editorRef.current) {
       return;
     }
 
-    expandTablesToFitContent();
+    if (options?.expandTables) {
+      expandTablesToFitContent();
+    }
     const measuredWidth = Math.max(320, Math.ceil(editorRef.current.scrollWidth));
     onAutoResizeWidth(measuredWidth);
     syncHeightToContent();
   };
 
-  const commitDraftFromDom = () => {
+  const commitDraftFromDom = (options?: { expandTables?: boolean }) => {
     if (!editorRef.current) {
       return;
     }
 
     draftHtmlRef.current = editorRef.current.innerHTML;
-    syncDimensionsToContent();
+    syncDimensionsToContent(options);
     onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
   };
 
@@ -216,24 +282,41 @@ export const TextNode = ({
     return table instanceof HTMLTableElement ? table : null;
   };
 
-  const getTableColumnWidths = (wrapper: HTMLElement) => {
-    const explicitWidths = (wrapper.getAttribute("data-col-widths") ?? "")
-      .split(",")
-      .map((value) => Number(value.trim()))
-      .filter((value) => Number.isFinite(value) && value > 0);
-
-    if (explicitWidths.length > 0) {
-      return explicitWidths;
-    }
-
-    const table = getTableElement(wrapper);
-    const firstRow = table?.rows.item(0);
-
+  const getMeasuredTableColumnWidths = (table: HTMLTableElement) => {
+    const firstRow = table.rows.item(0);
     if (!firstRow) {
       return [];
     }
 
-    return Array.from(firstRow.cells).map((cell) => Math.max(72, cell.offsetWidth));
+    return Array.from(firstRow.cells).map((cell) =>
+      Math.max(72, Math.round(cell.getBoundingClientRect().width || cell.offsetWidth || 120)),
+    );
+  };
+
+  const normalizeTableColumnWidths = (table: HTMLTableElement, widths: number[]) => {
+    const columnCount = table.rows.item(0)?.cells.length ?? 0;
+    if (columnCount === 0) {
+      return [];
+    }
+
+    const fallbackWidths = getMeasuredTableColumnWidths(table);
+    return Array.from({ length: columnCount }, (_, index) =>
+      Math.max(72, Math.round(widths[index] ?? fallbackWidths[index] ?? 120)),
+    );
+  };
+
+  const getTableColumnWidths = (wrapper: HTMLElement) => {
+    const table = getTableElement(wrapper);
+    if (!table) {
+      return [];
+    }
+
+    const explicitWidths = readTableColumnWidths(wrapper, table);
+    if (explicitWidths.length > 0) {
+      return normalizeTableColumnWidths(table, explicitWidths);
+    }
+
+    return getMeasuredTableColumnWidths(table);
   };
 
   const applyTableColumnWidths = (wrapper: HTMLElement, widths: number[]) => {
@@ -242,10 +325,13 @@ export const TextNode = ({
       return;
     }
 
-    const normalizedWidths = widths.map((width) => Math.max(72, Math.round(width)));
+    const normalizedWidths = normalizeTableColumnWidths(table, widths);
+    if (normalizedWidths.length === 0) {
+      return;
+    }
     let colGroup = table.querySelector(":scope > colgroup");
 
-    if (!(colGroup instanceof HTMLTableColElement) && !(colGroup instanceof HTMLTableSectionElement)) {
+    if (!(colGroup instanceof HTMLTableColElement)) {
       colGroup = document.createElement("colgroup");
       table.insertBefore(colGroup, table.firstChild);
     }
@@ -269,16 +355,32 @@ export const TextNode = ({
     wrapper.setAttribute("data-col-widths", normalizedWidths.join(","));
   };
 
+  const measureCellContentWidth = (cell: HTMLTableCellElement) => {
+    const content = cell.querySelector(":scope > .text-block-table-cell-content");
+    if (!(content instanceof HTMLElement)) {
+      return Math.ceil(cell.scrollWidth);
+    }
+
+    const childWidths = Array.from(content.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement)
+      .map((child) => Math.max(child.scrollWidth, child.getBoundingClientRect().width));
+
+    if (childWidths.length === 0) {
+      return Math.ceil(content.getBoundingClientRect().width);
+    }
+
+    return Math.ceil(Math.max(...childWidths));
+  };
+
   const expandTablesToFitContent = () => {
     const editor = editorRef.current;
     if (!editor) {
       return;
     }
 
-    // Walk inner tables first so their expanded width can push outer cells wider.
     const wrappers = Array.from(editor.querySelectorAll(".text-block-table-wrap"))
       .filter((element): element is HTMLElement => element instanceof HTMLElement)
-      .reverse();
+      .filter((wrapper) => !wrapper.closest("td"));
 
     for (let pass = 0; pass < 4; pass += 1) {
       let changed = false;
@@ -301,10 +403,7 @@ export const TextNode = ({
               return;
             }
 
-            const content = cell.querySelector(":scope > .text-block-table-cell-content");
-            const contentWidth = content instanceof HTMLElement
-              ? Math.ceil(content.scrollWidth)
-              : Math.ceil(cell.scrollWidth);
+            const contentWidth = measureCellContentWidth(cell);
             const style = window.getComputedStyle(cell);
             const paddingX = (Number.parseFloat(style.paddingLeft) || 0)
               + (Number.parseFloat(style.paddingRight) || 0);
@@ -454,21 +553,39 @@ export const TextNode = ({
   };
 
   const getTableResizeWrapper = (
-    event: Pick<PointerLikeEvent, "clientX">,
+    event: Pick<PointerLikeEvent, "clientX" | "clientY">,
     element: HTMLElement | null,
   ) => {
-    const wrapper = element?.closest(".text-block-table-wrap");
-    if (!(wrapper instanceof HTMLElement)) {
+    const editor = editorRef.current;
+    if (!editor) {
       return null;
     }
 
-    if (element?.dataset.tableResizeHandle === "true") {
-      return wrapper;
+    const wrappers = Array.from(editor.querySelectorAll(".text-block-table-wrap"))
+      .filter((node): node is HTMLElement => node instanceof HTMLElement)
+      .map((wrapper) => ({
+        wrapper,
+        rect: wrapper.getBoundingClientRect(),
+      }))
+      .filter(({ rect }) =>
+        event.clientY >= rect.top - TABLE_RESIZE_HIT_SLOP
+        && event.clientY <= rect.bottom + TABLE_RESIZE_HIT_SLOP
+        && Math.abs(rect.right - event.clientX) <= TABLE_RESIZE_HIT_SLOP
+      )
+      .sort((left, right) => {
+        const rightDistanceDiff = Math.abs(left.rect.right - event.clientX) - Math.abs(right.rect.right - event.clientX);
+        if (rightDistanceDiff !== 0) {
+          return rightDistanceDiff;
+        }
+
+        return left.rect.width - right.rect.width;
+      });
+
+    if (wrappers.length > 0) {
+      return wrappers[0].wrapper;
     }
 
-    return Math.abs(wrapper.getBoundingClientRect().right - event.clientX) <= TABLE_RESIZE_HIT_SLOP
-      ? wrapper
-      : null;
+    return null;
   };
 
   const getNodeResizeHandle = (event: Pick<PointerLikeEvent, "clientX">) => {
@@ -535,17 +652,46 @@ export const TextNode = ({
     };
   };
 
+  const getTopLevelBlockLocation = (element: Element | null) => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return null;
+    }
+
+    let current = element instanceof HTMLElement ? element : element?.parentElement ?? null;
+    while (current && current.parentElement !== editor) {
+      current = current.parentElement;
+    }
+
+    if (!(current instanceof HTMLElement) || current.parentElement !== editor || !current.dataset.blockKind) {
+      return null;
+    }
+
+    const topBlockIndex = Number(current.dataset.topBlockIndex);
+    if (!Number.isInteger(topBlockIndex)) {
+      return null;
+    }
+
+    return {
+      block: current,
+      topBlockIndex,
+      blockKind: current.dataset.blockKind ?? "",
+    };
+  };
+
   const getCellLocation = (cell: HTMLTableCellElement) => {
     const wrapper = cell.closest(".text-block-table-wrap");
     const row = cell.parentElement;
     const blockLocation = getBlockLocation(cell);
+    const topLevelBlockLocation = getTopLevelBlockLocation(cell);
 
-    if (!(wrapper instanceof HTMLElement) || !(row instanceof HTMLTableRowElement) || !blockLocation) {
+    if (!(wrapper instanceof HTMLElement) || !(row instanceof HTMLTableRowElement) || !blockLocation || !topLevelBlockLocation) {
       return null;
     }
 
     return {
       blockIndex: blockLocation.blockIndex,
+      topBlockIndex: topLevelBlockLocation.topBlockIndex,
       tableKey: wrapper.dataset.tableKey ?? "",
       row: row.rowIndex,
       column: cell.cellIndex,
@@ -556,6 +702,54 @@ export const TextNode = ({
     if (cell && editorRef.current?.contains(cell)) {
       activeTableCellRef.current = cell;
     }
+  };
+
+  const syncActiveTableCellFromSelection = () => {
+    const selection = window.getSelection();
+    const anchorNode = selection?.anchorNode;
+    const selectionCell = anchorNode instanceof Element
+      ? anchorNode.closest("td")
+      : anchorNode?.parentElement?.closest("td");
+
+    if (selectionCell instanceof HTMLTableCellElement && editorRef.current?.contains(selectionCell)) {
+      activeTableCellRef.current = selectionCell;
+    }
+  };
+
+  const applyInlineFormatCommand = (nextCommand: TextEditorCommand) => {
+    if (!editorRef.current) {
+      return false;
+    }
+
+    if (!restoreSavedSelectionRange() && !saveCurrentSelectionRange()) {
+      return false;
+    }
+
+    const selection = window.getSelection();
+    if (!isSelectionInsideEditor(selection)) {
+      return false;
+    }
+
+    document.execCommand("styleWithCSS", false, "true");
+
+    if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
+      document.execCommand("fontName", false, nextCommand.fontFamily);
+    }
+
+    if (nextCommand.type === "set-text-color" && typeof nextCommand.color === "string") {
+      document.execCommand("foreColor", false, nextCommand.color);
+    }
+
+    if (nextCommand.type === "set-highlight-color" && typeof nextCommand.color === "string") {
+      document.execCommand("hiliteColor", false, nextCommand.color);
+    }
+
+    draftHtmlRef.current = editorRef.current.innerHTML;
+    syncDimensionsToContent();
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    saveCurrentSelectionRange();
+    editorRef.current.focus();
+    return true;
   };
 
   const applyCellRangeSelection = (
@@ -584,9 +778,29 @@ export const TextNode = ({
     });
   };
 
+  const applyMixedRangeSelection = (options: {
+    startBlockIndex: number;
+    endBlockIndex: number;
+    startTableKey?: string;
+    startRow?: number;
+    endTableKey?: string;
+    endRow?: number;
+  }) => {
+    setEditorSelection({
+      type: "mixed-range",
+      startBlockIndex: Math.min(options.startBlockIndex, options.endBlockIndex),
+      endBlockIndex: Math.max(options.startBlockIndex, options.endBlockIndex),
+      ...(options.startTableKey ? { startTableKey: options.startTableKey } : {}),
+      ...(typeof options.startRow === "number" ? { startRow: options.startRow } : {}),
+      ...(options.endTableKey ? { endTableKey: options.endTableKey } : {}),
+      ...(typeof options.endRow === "number" ? { endRow: options.endRow } : {}),
+    });
+  };
+
   const startPendingSelection = (
     event: ReactPointerEvent<HTMLDivElement>,
     startBlockIndex: number,
+    startTopBlockIndex: number,
     startCell?: HTMLTableCellElement | null,
   ) => {
     suppressBlurCommitRef.current = true;
@@ -594,6 +808,7 @@ export const TextNode = ({
 
     pendingSelectionRef.current = {
       startBlockIndex,
+      startTopBlockIndex,
       startTableKey: startCellLocation?.tableKey ?? null,
       startRow: startCellLocation?.row ?? null,
       startColumn: startCellLocation?.column ?? null,
@@ -628,7 +843,7 @@ export const TextNode = ({
           ? targetElement.closest("td")
           : null;
       const endCell = cell instanceof HTMLTableCellElement ? getCellLocation(cell) : null;
-      const endBlock = getBlockLocation(targetElement);
+      const endTopBlock = getTopLevelBlockLocation(targetElement);
 
       const resizeCell = cell instanceof HTMLTableCellElement && session.mode === "none"
         ? getColumnResizeCell(moveEvent, cell)
@@ -667,13 +882,42 @@ export const TextNode = ({
         return;
       }
 
-      if (endBlock && endBlock.blockIndex !== session.startBlockIndex) {
+      if (session.startTableKey && endTopBlock && endTopBlock.topBlockIndex !== session.startTopBlockIndex) {
         if (session.mode !== "block-range") {
           session.mode = "block-range";
           window.getSelection()?.removeAllRanges();
         }
         moveEvent.preventDefault();
-        applyBlockRangeSelection(session.startBlockIndex, endBlock.blockIndex);
+        applyMixedRangeSelection({
+          startBlockIndex: session.startTopBlockIndex,
+          endBlockIndex: endTopBlock.topBlockIndex,
+          startTableKey: session.startTableKey,
+          startRow: session.startRow ?? 0,
+        });
+        return;
+      }
+
+      if (!session.startTableKey && endCell) {
+        if (session.mode !== "block-range") {
+          session.mode = "block-range";
+          window.getSelection()?.removeAllRanges();
+        }
+        moveEvent.preventDefault();
+        applyMixedRangeSelection({
+          startBlockIndex: session.startTopBlockIndex,
+          endBlockIndex: endCell.topBlockIndex,
+          endTableKey: endCell.tableKey,
+          endRow: endCell.row,
+        });
+        return;
+      }
+
+      if (!session.startTableKey && !endCell) {
+        if (session.mode !== "none") {
+          session.mode = "none";
+          setEditorSelection({ type: "none" });
+        }
+        suppressBlurCommitRef.current = false;
       }
     };
 
@@ -687,6 +931,7 @@ export const TextNode = ({
 
       setSelectionAnchor({
         blockIndex: session.startBlockIndex,
+        topBlockIndex: session.startTopBlockIndex,
         tableKey: session.startTableKey,
         row: session.startRow,
         column: session.startColumn,
@@ -810,9 +1055,66 @@ export const TextNode = ({
       for (let columnIndex = editorSelection.startColumn; columnIndex <= editorSelection.endColumn; columnIndex += 1) {
         const cell = row.cells.item(columnIndex);
         if (cell instanceof HTMLTableCellElement) {
-          cell.innerHTML = "<p><br /></p>";
+          cell.innerHTML = wrapTableCellContentHtml();
         }
       }
+    }
+
+    commitDraftFromDom();
+    setEditorSelection({ type: "none" });
+    return true;
+  };
+
+  const clearMixedRange = () => {
+    if (editorSelection.type !== "mixed-range" || !editorRef.current) {
+      return false;
+    }
+
+    const topBlocks = Array.from(editorRef.current.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && !!element.dataset.blockKind)
+      .filter((element) => {
+        const blockIndex = Number(element.dataset.topBlockIndex);
+        return Number.isInteger(blockIndex)
+          && blockIndex >= editorSelection.startBlockIndex
+          && blockIndex <= editorSelection.endBlockIndex;
+      });
+
+    if (topBlocks.length === 0) {
+      return false;
+    }
+
+    topBlocks.forEach((block) => {
+      if (block.dataset.blockKind !== "table") {
+        block.remove();
+        return;
+      }
+
+      const table = getTableElement(block);
+      if (!table) {
+        block.remove();
+        return;
+      }
+
+      const isStartBoundary = block.dataset.tableKey === editorSelection.startTableKey;
+      const isEndBoundary = block.dataset.tableKey === editorSelection.endTableKey;
+      const firstRow = isEndBoundary ? 0 : (isStartBoundary ? (editorSelection.startRow ?? 0) : 0);
+      const lastRow = isStartBoundary && isEndBoundary
+        ? (editorSelection.endRow ?? Math.max(0, table.rows.length - 1))
+        : isEndBoundary
+          ? (editorSelection.endRow ?? Math.max(0, table.rows.length - 1))
+          : Math.max(0, table.rows.length - 1);
+
+      for (let rowIndex = lastRow; rowIndex >= firstRow; rowIndex -= 1) {
+        table.rows.item(rowIndex)?.remove();
+      }
+
+      if (table.rows.length === 0) {
+        block.remove();
+      }
+    });
+
+    if (!editorRef.current.querySelector("[data-block-kind]")) {
+      editorRef.current.innerHTML = EMPTY_PARAGRAPH_HTML;
     }
 
     commitDraftFromDom();
@@ -826,6 +1128,14 @@ export const TextNode = ({
     }
 
     return clearSelectedTableCells();
+  };
+
+  const cutMixedRange = (clipboardData: DataTransfer | null) => {
+    if (editorSelection.type !== "mixed-range" || !copyMixedRange(clipboardData)) {
+      return false;
+    }
+
+    return clearMixedRange();
   };
 
   const deleteSelectedBlocks = () => {
@@ -902,8 +1212,72 @@ export const TextNode = ({
     return true;
   };
 
+  const copyMixedRange = (clipboardData: DataTransfer | null) => {
+    if (editorSelection.type !== "mixed-range" || !clipboardData || !editorRef.current) {
+      return false;
+    }
+
+    const topBlocks = Array.from(editorRef.current.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && !!element.dataset.blockKind)
+      .filter((element) => {
+        const blockIndex = Number(element.dataset.topBlockIndex);
+        return Number.isInteger(blockIndex)
+          && blockIndex >= editorSelection.startBlockIndex
+          && blockIndex <= editorSelection.endBlockIndex;
+      });
+
+    if (topBlocks.length === 0) {
+      return false;
+    }
+
+    const htmlParts: string[] = [];
+    const textParts: string[] = [];
+
+    topBlocks.forEach((block) => {
+      if (block.dataset.blockKind === "table") {
+        const table = getTableElement(block);
+        if (!table) {
+          return;
+        }
+
+        const startRow = block.dataset.tableKey === editorSelection.startTableKey
+          ? (editorSelection.startRow ?? 0)
+          : 0;
+        const endRow = block.dataset.tableKey === editorSelection.endTableKey
+          ? (editorSelection.endRow ?? Math.max(0, table.rows.length - 1))
+          : Math.max(0, table.rows.length - 1);
+        const serialized = serializeTableRange(
+          block,
+          startRow,
+          endRow,
+          0,
+          Math.max(0, (table.rows.item(0)?.cells.length ?? 1) - 1),
+        );
+        if (serialized) {
+          htmlParts.push(serialized.html);
+          textParts.push(serialized.text);
+        }
+        return;
+      }
+
+      htmlParts.push(block.outerHTML);
+      textParts.push(block.innerText.trim());
+    });
+
+    const text = textParts.filter(Boolean).join("\n\n");
+    const html = htmlParts.join("");
+    if (!html) {
+      return false;
+    }
+
+    clipboardData.setData("text/plain", text);
+    clipboardData.setData("text/html", html);
+    customClipboardRef.current = { text, html };
+    return true;
+  };
+
   const writeCurrentSelectionToClipboard = (clipboardData: DataTransfer | null) =>
-    copySelectedTableCells(clipboardData) || copySelectedBlocks(clipboardData);
+    copySelectedTableCells(clipboardData) || copyMixedRange(clipboardData) || copySelectedBlocks(clipboardData);
 
   const insertHtmlAtCaret = (html: string) => {
     if (!editorRef.current) {
@@ -1007,6 +1381,7 @@ export const TextNode = ({
     range.collapse(true);
     selection.removeAllRanges();
     selection.addRange(range);
+    saveCurrentSelectionRange();
   };
 
   const placeCaretAtEnd = () => {
@@ -1024,6 +1399,7 @@ export const TextNode = ({
     range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
+    saveCurrentSelectionRange();
   };
 
   const insertTextAtCaret = (text: string) => {
@@ -1046,6 +1422,7 @@ export const TextNode = ({
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
+    saveCurrentSelectionRange();
   };
 
   const insertHtmlAndCommit = (html: string, placement: "caret" | "end" = "caret") => {
@@ -1064,7 +1441,7 @@ export const TextNode = ({
     }
 
     draftHtmlRef.current = editorRef.current.innerHTML;
-    syncDimensionsToContent();
+    syncDimensionsToContent({ expandTables: isStructuredHtml(html) });
     onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
     editorRef.current.focus();
   };
@@ -1085,7 +1462,7 @@ export const TextNode = ({
     }
 
     return wrapRichTextTableHtml(
-      `<tbody>${rows.map((cells) => `<tr>${cells.map((cell) => `<td><p>${escapeHtml(cell) || "<br />"}</p></td>`).join("")}</tr>`).join("")}</tbody>`,
+      `<tbody>${rows.map((cells) => `<tr>${cells.map((cell) => `<td>${wrapTableCellContentHtml(`<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p>${escapeHtml(cell) || "<br />"}</p></div>`)}</td>`).join("")}</tr>`).join("")}</tbody>`,
     );
   };
 
@@ -1106,13 +1483,6 @@ export const TextNode = ({
           existingWrapper.classList.add("text-block");
         }
         existingWrapper.dataset.blockKind = existingWrapper.dataset.blockKind || "table";
-        if (!existingWrapper.querySelector(":scope > .text-block-table-resize")) {
-          const handle = document.createElement("span");
-          handle.className = "text-block-table-resize";
-          handle.contentEditable = "false";
-          handle.dataset.tableResizeHandle = "true";
-          existingWrapper.appendChild(handle);
-        }
         return;
       }
 
@@ -1150,7 +1520,7 @@ export const TextNode = ({
 
     if (editorRef.current) {
       draftHtmlRef.current = editorRef.current.innerHTML;
-      syncDimensionsToContent();
+      syncDimensionsToContent({ expandTables: true });
       onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
       editorRef.current.focus();
     }
@@ -1197,7 +1567,7 @@ export const TextNode = ({
 
     for (let index = 0; index < columnCount; index += 1) {
       const nextCell = document.createElement("td");
-      nextCell.innerHTML = "<p><br /></p>";
+      nextCell.innerHTML = wrapTableCellContentHtml();
       nextRow.appendChild(nextCell);
     }
 
@@ -1213,6 +1583,7 @@ export const TextNode = ({
   };
 
   const getActiveTableCell = () => {
+    syncActiveTableCellFromSelection();
     const selection = window.getSelection();
     const anchorNode = selection?.anchorNode;
     const selectionCell = anchorNode instanceof Element
@@ -1284,7 +1655,7 @@ export const TextNode = ({
 
     Array.from(table.rows).forEach((currentRow) => {
       const nextCell = document.createElement("td");
-      nextCell.innerHTML = "<p><br /></p>";
+      nextCell.innerHTML = wrapTableCellContentHtml();
       const referenceCell = currentRow.cells.item(targetIndex);
       currentRow.insertBefore(nextCell, referenceCell ?? null);
     });
@@ -1401,8 +1772,8 @@ export const TextNode = ({
       return false;
     }
 
-    return appendRowsToCurrentTable(
-      rows.map((cells) => cells.map((cell) => `<p>${escapeHtml(cell) || "<br />"}</p>`)),
+  return appendRowsToCurrentTable(
+      rows.map((cells) => cells.map((cell) => wrapTableCellContentHtml(`<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p>${escapeHtml(cell) || "<br />"}</p></div>`))),
     );
   };
 
@@ -1456,6 +1827,7 @@ export const TextNode = ({
     }
 
     insertTextAtCaret(plainText);
+    syncActiveTableCellFromSelection();
     if (!editorRef.current) {
       return;
     }
@@ -1513,7 +1885,7 @@ export const TextNode = ({
     }
 
     if (event.key === "Delete" || event.key === "Backspace") {
-      if (clearSelectedTableCells() || deleteSelectedBlocks()) {
+      if (clearSelectedTableCells() || clearMixedRange() || deleteSelectedBlocks()) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -1535,7 +1907,7 @@ export const TextNode = ({
       return;
     }
 
-    if (cutSelectedTableCells(event.clipboardData)) {
+    if (cutSelectedTableCells(event.clipboardData) || cutMixedRange(event.clipboardData)) {
       event.preventDefault();
     }
   };
@@ -1576,6 +1948,20 @@ export const TextNode = ({
     return () => editor.removeEventListener("load", handleImageLoad, true);
   }, [assets, editing, node.content]);
 
+  useEffect(() => {
+    if (!editing) {
+      return;
+    }
+
+    const handleSelectionChange = () => {
+      syncActiveTableCellFromSelection();
+      saveCurrentSelectionRange();
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, [editing]);
+
   useEffect(() => () => {
     setColumnResizeHover(null);
     setTableResizeHover(null);
@@ -1592,6 +1978,12 @@ export const TextNode = ({
       if (element instanceof HTMLElement) {
         element.dataset.blockIndex = String(index);
         element.dataset.tableKey = `table-${index}`;
+      }
+    });
+
+    Array.from(editor.children).forEach((element, index) => {
+      if (element instanceof HTMLElement && element.dataset.blockKind) {
+        element.dataset.topBlockIndex = String(index);
       }
     });
   }, [editing, node.content, assets]);
@@ -1637,10 +2029,67 @@ export const TextNode = ({
       return;
     }
 
-    Array.from(editor.querySelectorAll("[data-block-kind][data-block-index]"))
-      .filter((element): element is HTMLElement => element instanceof HTMLElement)
+    if (editorSelection.type === "mixed-range") {
+      Array.from(editor.children)
+        .filter((element): element is HTMLElement => element instanceof HTMLElement && !!element.dataset.blockKind)
+        .forEach((element) => {
+          const blockIndex = Number(element.dataset.topBlockIndex);
+          if (
+            Number.isInteger(blockIndex)
+            && blockIndex >= editorSelection.startBlockIndex
+            && blockIndex <= editorSelection.endBlockIndex
+          ) {
+            element.classList.add("block-range-selected");
+          }
+        });
+
+      const applyTableRows = (tableKey: string | undefined, startRow: number, endRow: number) => {
+        if (!tableKey) {
+          return;
+        }
+
+        const wrapper = editor.querySelector(`[data-table-key="${tableKey}"]`);
+        if (!(wrapper instanceof HTMLElement)) {
+          return;
+        }
+
+        const table = getTableElement(wrapper);
+        if (!table) {
+          return;
+        }
+
+        for (let rowIndex = startRow; rowIndex <= endRow; rowIndex += 1) {
+          const row = table.rows.item(rowIndex);
+          if (!row) {
+            continue;
+          }
+
+          Array.from(row.cells).forEach((cell) => {
+            if (cell instanceof HTMLTableCellElement) {
+              cell.classList.add("table-cell-range-selected");
+            }
+          });
+        }
+      };
+
+      if (editorSelection.startTableKey) {
+        const wrapper = editor.querySelector(`[data-table-key="${editorSelection.startTableKey}"]`);
+        const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
+        if (table) {
+          applyTableRows(editorSelection.startTableKey, editorSelection.startRow ?? 0, Math.max(0, table.rows.length - 1));
+        }
+      }
+
+      if (editorSelection.endTableKey) {
+        applyTableRows(editorSelection.endTableKey, 0, editorSelection.endRow ?? 0);
+      }
+      return;
+    }
+
+    Array.from(editor.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && !!element.dataset.blockKind)
       .forEach((element) => {
-        const blockIndex = Number(element.dataset.blockIndex);
+        const blockIndex = Number(element.dataset.topBlockIndex);
         if (
           Number.isInteger(blockIndex)
           && blockIndex >= editorSelection.startBlockIndex
@@ -1667,7 +2116,7 @@ export const TextNode = ({
         return;
       }
 
-      if (cutSelectedTableCells(event.clipboardData)) {
+      if (cutSelectedTableCells(event.clipboardData) || cutMixedRange(event.clipboardData)) {
         event.preventDefault();
       }
     };
@@ -1726,6 +2175,11 @@ export const TextNode = ({
 
     if (command.type === "append-text" && typeof command.text === "string" && command.text.length > 0) {
       appendTextAtEnd(command.text);
+      return;
+    }
+
+    if (command.type === "set-font-family" || command.type === "set-text-color" || command.type === "set-highlight-color") {
+      applyInlineFormatCommand(command);
     }
   }, [command, editing]);
 
@@ -1750,27 +2204,18 @@ export const TextNode = ({
           onSelect();
           onDragHandlePointerDown(event);
         }}
-      >
-        {selected && !editing ? (
-          <button
-            type="button"
-            className="text-node-top-resize"
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              onResizePointerDown(event, "right");
-            }}
-            aria-label="Resize text node width"
-          >
-            &lt;&gt;
-          </button>
-        ) : null}
-      </div>
+      />
       <div
         ref={editorRef}
         className="text-node-content"
         contentEditable={editing}
         suppressContentEditableWarning
         onPointerDownCapture={(event) => {
+          if (event.button === 1) {
+            onMiddlePanPointerDown(event);
+            return;
+          }
+
           const target = event.target;
           const targetElement = target instanceof HTMLElement ? target : null;
           const resizeWrapper = getTableResizeWrapper(event, targetElement);
@@ -1845,14 +2290,21 @@ export const TextNode = ({
                 return;
               }
             }
-            if (event.shiftKey && block && selectionAnchor) {
+            if (event.shiftKey && block && selectionAnchor && (selectionAnchor.tableKey || cell instanceof HTMLTableCellElement)) {
+              const topBlock = target instanceof Element ? getTopLevelBlockLocation(target) : null;
+              if (!topBlock) {
+                return;
+              }
               event.preventDefault();
               event.stopPropagation();
-              applyBlockRangeSelection(selectionAnchor.blockIndex, block.blockIndex);
+              applyBlockRangeSelection(selectionAnchor.topBlockIndex, topBlock.topBlockIndex);
               return;
             }
             if (block) {
-              startPendingSelection(event, block.blockIndex, cell instanceof HTMLTableCellElement ? cell : null);
+              const topBlock = target instanceof Element ? getTopLevelBlockLocation(target) : null;
+              if (topBlock) {
+                startPendingSelection(event, block.blockIndex, topBlock.topBlockIndex, cell instanceof HTMLTableCellElement ? cell : null);
+              }
             }
           }
 
@@ -1915,6 +2367,8 @@ export const TextNode = ({
         }}
         onInput={(event) => {
           draftHtmlRef.current = event.currentTarget.innerHTML;
+          syncActiveTableCellFromSelection();
+          saveCurrentSelectionRange();
           syncDimensionsToContent();
         }}
         onKeyDown={handleKeyDown}
@@ -1930,22 +2384,6 @@ export const TextNode = ({
           onCommit(getCurrentRichTextDoc());
         }}
       />
-      {selected && !editing ? (
-        <>
-          <button
-            type="button"
-            className="resize-edge resize-edge-left"
-            onPointerDown={(event) => onResizePointerDown(event, "left")}
-            aria-label="Resize text node left edge"
-          />
-          <button
-            type="button"
-            className="resize-edge resize-edge-right"
-            onPointerDown={(event) => onResizePointerDown(event, "right")}
-            aria-label="Resize text node right edge"
-          />
-        </>
-      ) : null}
     </div>
   );
 };

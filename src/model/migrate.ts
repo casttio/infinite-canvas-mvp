@@ -1,4 +1,5 @@
 import { createDefaultPageBounds, derivePageBoundsFromNodes } from "./defaults";
+import { normalizeDocument } from "./normalize";
 import type { DocumentFile, PageBounds } from "./types";
 
 export const migrateDocument = (input: unknown): DocumentFile => {
@@ -23,15 +24,15 @@ export const migrateDocument = (input: unknown): DocumentFile => {
             typeof (node as { h?: unknown }).h === "number",
         )
       : [];
-    return {
+    return normalizeDocument({
       ...(rawInput as Record<string, unknown>),
       version: 2,
       pageBounds: derivePageBoundsFromNodes(migratedNodes),
-    } as DocumentFile;
+    } as DocumentFile);
   }
 
   if (rawInput.version === 2) {
-    return input as DocumentFile;
+    return normalizeDocument(input as DocumentFile);
   }
 
   throw new Error(`仅支持 version 1 或 version 2，当前文件版本为 ${String(rawInput.version)}。`);

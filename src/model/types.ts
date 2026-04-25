@@ -23,6 +23,9 @@ export interface RichTextTextLeaf extends UnknownFields {
   type: "text";
   text: string;
   marks?: Array<"bold" | "italic">;
+  fontFamily?: string;
+  color?: string;
+  highlightColor?: string;
 }
 
 export interface RichTextBreakLeaf extends UnknownFields {
