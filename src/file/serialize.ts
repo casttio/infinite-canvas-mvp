@@ -90,12 +90,36 @@ const plainTextFromBlock = (block: unknown): string => {
 };
 
 const documentPreviewHtml = (document: DocumentFile) => {
-  const nodes = [...document.nodes].sort((left, right) => (left.y - right.y) || (left.x - right.x) || (left.z - right.z));
+  const nodes = [...document.nodes].sort((left, right) =>
+    (left.pageIndex - right.pageIndex)
+    || (left.y - right.y)
+    || (left.x - right.x)
+    || (left.z - right.z));
 
   return nodes.map((node) => {
     if (node.type === "image") {
       const asset = document.assets[node.assetId];
-      return `<section class="node image-node"><h2>图片块</h2>${asset ? `<img src="${asset.data}" alt="${escapeHtml(asset.name)}" />` : "<p>图片资源缺失</p>"}</section>`;
+      if (!asset) {
+        return `<section class="node image-node"><h2>附件块</h2><p>资源缺失</p></section>`;
+      }
+
+      if (asset.storage === "managed") {
+        return `<section class="node image-node"><h2>${asset.type === "pdf" ? "PDF 附件" : "附件"}</h2><p>${escapeHtml(asset.name)}</p><p class="hint">${escapeHtml(asset.relativePath ?? "受管附件")}</p></section>`;
+      }
+
+      if (asset.type === "image" && asset.data) {
+        return `<section class="node image-node"><h2>图片块</h2><img src="${asset.data}" alt="${escapeHtml(asset.name)}" /></section>`;
+      }
+
+      if (asset.type === "html" && asset.data) {
+        return `<section class="node image-node"><h2>HTML 预览</h2><p>${escapeHtml(asset.name)}</p></section>`;
+      }
+
+      if (asset.type === "pdf" && asset.data) {
+        return `<section class="node image-node"><h2>PDF 附件</h2><iframe src="${asset.data}" title="${escapeHtml(asset.name)}"></iframe></section>`;
+      }
+
+      return `<section class="node image-node"><h2>附件</h2><p>${escapeHtml(asset.name)}</p><p class="hint">${escapeHtml(asset.mimeType || "application/octet-stream")}</p></section>`;
     }
 
     const text = node.content.content.map(plainTextFromBlock).join("\n\n").trim();
@@ -121,7 +145,8 @@ export const serializeDocument = (document: DocumentFile): string => {
     .node { margin: 0 0 24px; padding: 20px; border-radius: 16px; background: white; box-shadow: 0 8px 24px rgba(31, 58, 95, 0.08); }
     h1, h2 { margin: 0 0 12px; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 0; font: inherit; line-height: 1.6; }
-    img { max-width: 100%; height: auto; border-radius: 12px; }
+    img, iframe { max-width: 100%; width: 100%; height: auto; border-radius: 12px; border: 0; }
+    iframe { min-height: 480px; background: white; }
     .hint { color: #64748b; margin-bottom: 24px; }
   </style>
 </head>

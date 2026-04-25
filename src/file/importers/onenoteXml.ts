@@ -1,4 +1,4 @@
-import { createAssetId, createDocumentId, createNodeId, derivePageBoundsFromNodes } from "../../model/defaults";
+import { createAssetId, createDefaultDocumentAppearance, createDocumentId, createNodeId, derivePageBoundsFromNodes } from "../../model/defaults";
 import type {
   CanvasNode,
   DocumentFile,
@@ -226,6 +226,7 @@ const outlineToTextNode = (
   return {
     id: createNodeId("text"),
     type: "text",
+    pageIndex: 0,
     x,
     y,
     w: DEFAULT_TEXT_NODE_WIDTH,
@@ -309,5 +310,6 @@ export const importOneNoteXmlDocument = (rawXml: string, fileName = "import.xml"
       cameraY: 0,
       zoom: 1,
     },
+    appearance: createDefaultDocumentAppearance(),
   };
 };

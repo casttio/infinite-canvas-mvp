@@ -7,6 +7,7 @@ const nextZ = (nodes: CanvasNode[]) => (nodes.length ? Math.max(...nodes.map((no
 
 const clampNodeToPageOrigin = (node: CanvasNode, document: DocumentFile): CanvasNode => ({
   ...node,
+  pageIndex: Math.max(0, Math.round(node.pageIndex)),
   x: Math.max(document.pageBounds.x, node.x),
   y: Math.max(document.pageBounds.y, node.y),
 } as CanvasNode);
@@ -36,7 +37,11 @@ const pushOverlappingNodesDown = (
     }
 
     nextNodes
-      .filter((candidate) => candidate.id !== sourceNode.id && candidate.y >= sourceNode.y && overlapsHorizontally(sourceNode, candidate))
+      .filter((candidate) =>
+        candidate.id !== sourceNode.id
+        && candidate.pageIndex === sourceNode.pageIndex
+        && candidate.y >= sourceNode.y
+        && overlapsHorizontally(sourceNode, candidate))
       .sort((left, right) => (left.y - right.y) || (left.z - right.z))
       .forEach((candidate) => {
         const minY = sourceNode.y + sourceNode.h + VERTICAL_NODE_GAP;
@@ -71,6 +76,13 @@ export const addNodeToDocument = (document: DocumentFile, node: CanvasNode): Doc
     ...document,
     nodes: nextNodes,
     pageBounds: fitPageBoundsToNodes(nextNodes),
+    appearance: {
+      ...document.appearance,
+      pages: {
+        ...document.appearance.pages,
+        count: Math.max(document.appearance.pages.count, nextNode.pageIndex + 1),
+      },
+    },
   };
 };
 
@@ -114,5 +126,15 @@ export const updateNodeInDocument = (
     ...document,
     nodes: nextNodes,
     pageBounds: fitPageBoundsToNodes(nextNodes),
+    appearance: {
+      ...document.appearance,
+      pages: {
+        ...document.appearance.pages,
+        count: Math.max(
+          document.appearance.pages.count,
+          nextNodes.reduce((maxPageCount, node) => Math.max(maxPageCount, node.pageIndex + 1), 1),
+        ),
+      },
+    },
   };
 };

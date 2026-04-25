@@ -1,4 +1,4 @@
-import { createDefaultPageBounds, createDocumentId, createNodeId } from "../../model/defaults";
+import { createDefaultDocumentAppearance, createDefaultPageBounds, createDocumentId, createNodeId } from "../../model/defaults";
 import type { DocumentFile, RichTextDoc } from "../../model/types";
 
 const nowIso = () => new Date().toISOString();
@@ -35,6 +35,7 @@ export const importPlainTextDocument = (rawText: string, fileName = "import.txt"
       {
         id: createNodeId("text"),
         type: "text",
+        pageIndex: 0,
         x: 48,
         y: 48,
         w: 560,
@@ -53,5 +54,6 @@ export const importPlainTextDocument = (rawText: string, fileName = "import.txt"
       cameraY: 0,
       zoom: 1,
     },
+    appearance: createDefaultDocumentAppearance(),
   };
 };

@@ -15,7 +15,7 @@ export const migrateDocument = (input: unknown): DocumentFile => {
   if (rawInput.version === 1) {
     const migratedNodes = Array.isArray(rawInput.nodes)
       ? rawInput.nodes.filter(
-          (node): node is { id: string; type: "text" | "image"; x: number; y: number; w: number; h: number; z: number; style: Record<string, unknown> } =>
+          (node): node is { id: string; type: "text" | "image"; x: number; y: number; w: number; h: number; z: number; style: Record<string, unknown>; pageIndex?: number } =>
             !!node &&
             typeof node === "object" &&
             typeof (node as { x?: unknown }).x === "number" &&

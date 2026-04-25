@@ -12,6 +12,25 @@ export interface ViewState extends UnknownFields {
   zoom: number;
 }
 
+export interface DocumentGridAppearance extends UnknownFields {
+  enabled: boolean;
+  color: string;
+  size: number;
+}
+
+export interface DocumentPagesAppearance extends UnknownFields {
+  count: number;
+  height: number;
+  gap: number;
+  titles?: string[];
+}
+
+export interface DocumentAppearance extends UnknownFields {
+  pageBackground: string;
+  grid: DocumentGridAppearance;
+  pages: DocumentPagesAppearance;
+}
+
 export interface PageBounds extends UnknownFields {
   x: number;
   y: number;
@@ -24,6 +43,7 @@ export interface RichTextTextLeaf extends UnknownFields {
   text: string;
   marks?: Array<"bold" | "italic">;
   fontFamily?: string;
+  fontSize?: string;
   color?: string;
   highlightColor?: string;
 }
@@ -73,6 +93,7 @@ export interface RichTextDoc extends UnknownFields {
 export interface BaseNode extends UnknownFields {
   id: string;
   type: "text" | "image";
+  pageIndex: number;
   x: number;
   y: number;
   w: number;
@@ -95,10 +116,13 @@ export type CanvasNode = TextNode | ImageNode;
 
 export interface Asset extends UnknownFields {
   id: string;
-  type: "image";
+  type: "image" | "html" | "pdf" | "file";
+  storage?: "embedded" | "managed";
   mimeType: string;
   name: string;
-  data: string;
+  data?: string;
+  relativePath?: string;
+  sizeBytes?: number;
 }
 
 export type AssetMap = Record<string, Asset>;
@@ -111,4 +135,5 @@ export interface DocumentFile extends UnknownFields {
   assets: AssetMap;
   pageBounds: PageBounds;
   viewState: ViewState;
+  appearance: DocumentAppearance;
 }

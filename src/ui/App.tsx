@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent, PointerEvent as ReactPointerEvent } from "react";
-import { loadDocumentFromFile } from "../file/loadDocument";
+import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import { openFileWithPicker, setActiveFileHandle } from "../file/fileHandle";
+import { loadDocumentFromFile, loadDocumentFromRaw } from "../file/loadDocument";
 import { saveDocumentToDisk } from "../file/saveDocument";
+import { parseDocumentSchema } from "../model/schema";
+import { serializeDocumentJson } from "../file/serialize";
 import { dragNode } from "../editor/drag";
 import { resizeNode } from "../editor/resize";
 import type { ResizeHandle } from "../editor/resize";
@@ -24,6 +27,7 @@ import type { CanvasNode, DocumentFile, PageBounds, RichTextDoc, TextNode as Tex
 import { ImageNode } from "../nodes/ImageNode";
 import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
+import { FileSidebar } from "./FileSidebar";
 import { Toolbar } from "./Toolbar";
 
 type InteractionState =
@@ -51,10 +55,29 @@ type InteractionState =
       allowOverlap: boolean;
     };
 
+type SidebarContextMenuState =
+  | null
+  | {
+      kind: "file";
+      x: number;
+      y: number;
+      filePath: string;
+      fileName: string;
+    }
+  | {
+      kind: "page";
+      x: number;
+      y: number;
+      pageIndex: number;
+    };
+
 const fileNameFromMeta = (document: DocumentFile) => `${document.meta.id}.icanvas.html`;
 const CAMERA_OVERSCROLL_LEFT_TOP = 240;
 const CAMERA_OVERSCROLL_RIGHT_BOTTOM = 180;
 const ZOOM_SETTLE_DELAY_MS = 140;
+const AUTOSAVE_STORAGE_KEY = "icanvas.autosave.document";
+const AUTOSAVE_DELAY_MS = 800;
+const PAGE_STATE_STORAGE_KEY = "icanvas.page-state";
 
 const getInsertOffset = (count: number) => {
   const step = 28;
@@ -94,7 +117,7 @@ const clampViewStateToPage = (
   };
 };
 
-const getPageInsertionPoint = (documentFile: DocumentFile) => {
+const getPageInsertionPoint = (documentFile: DocumentFile, pageIndex = 0) => {
   const padding = 40;
 
   return {
@@ -128,6 +151,89 @@ const rectsIntersect = (
 const isEditableTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["input", "textarea", "select"].includes(target.tagName.toLowerCase()));
+
+const isFormFieldTarget = (target: EventTarget | null) =>
+  target instanceof HTMLElement && ["input", "textarea", "select"].includes(target.tagName.toLowerCase());
+
+const serializeDocument = (document: DocumentFile) => JSON.stringify(document);
+
+const inferRequiredPageCount = (document: DocumentFile) => {
+  return Math.max(1, document.nodes.reduce((maxPageCount, node) => Math.max(maxPageCount, node.pageIndex + 1), 1));
+};
+
+const plainTextFromRichTextDoc = (doc: RichTextDoc) =>
+  doc.content.map((block) => {
+    if (block.type === "paragraph") {
+      return block.content.map((inline) => {
+        if (inline.type === "text") {
+          return inline.text;
+        }
+        if (inline.type === "break") {
+          return "\n";
+        }
+        return "";
+      }).join("");
+    }
+
+    return "";
+  }).join("\n").trim();
+
+const formatUpdatedAt = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
+};
+
+const readStoredPageState = () => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PAGE_STATE_STORAGE_KEY);
+    if (!raw) {
+      return {} as Record<string, number>;
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])),
+    );
+  } catch {
+    return {} as Record<string, number>;
+  }
+};
+
+const getStoredPageIndex = (documentId: string, maxPageCount: number) => {
+  const pageState = readStoredPageState();
+  const pageIndex = pageState[documentId];
+  if (typeof pageIndex !== "number") {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(Math.round(pageIndex), Math.max(0, maxPageCount - 1)));
+};
+
+const setStoredPageIndex = (documentId: string, pageIndex: number) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextState = {
+    ...readStoredPageState(),
+    [documentId]: pageIndex,
+  };
+  window.localStorage.setItem(PAGE_STATE_STORAGE_KEY, JSON.stringify(nextState));
+};
 
 const readFileAsDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -170,12 +276,29 @@ export const App = () => {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const autosaveTimeoutRef = useRef<number | null>(null);
+  const pageSwipeGestureRef = useRef<{
+    pageIndex: number;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    offsetX: number;
+    isHorizontal: boolean;
+    moved: boolean;
+  } | null>(null);
   const suppressNextCanvasClickRef = useRef(false);
   const dragDidMoveRef = useRef(false);
   const resizeDidMoveRef = useRef(false);
+  const transientHistoryBaseRef = useRef<DocumentFile | null>(null);
   const editorCommandNonceRef = useRef(0);
   const zoomSettleTimeoutRef = useRef<number | null>(null);
-  const [documentFile, setDocumentFile] = useState<DocumentFile>(() => createEmptyDocument());
+  const initialDocumentRef = useRef<DocumentFile | null>(null);
+  const fileHandleRef = useRef<FileSystemFileHandle | null>(null);
+  if (!initialDocumentRef.current) {
+    initialDocumentRef.current = createEmptyDocument();
+  }
+  const [documentFile, setDocumentFile] = useState<DocumentFile>(initialDocumentRef.current);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [interaction, setInteraction] = useState<InteractionState>({ type: "none" });
@@ -183,38 +306,288 @@ export const App = () => {
   const [isDirty, setIsDirty] = useState(false);
   const [editorCommand, setEditorCommand] = useState<TextEditorCommand | null>(null);
   const [zoomTransitionActive, setZoomTransitionActive] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "pending" | "saved">("idle");
+  const [autosaveRestoreAvailable, setAutosaveRestoreAvailable] = useState(false);
+  const [currentSavePath, setCurrentSavePath] = useState<string | null>(null);
+  const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
+  const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>([]);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
+  const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
+  const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
+  const [renamingFileName, setRenamingFileName] = useState("");
+  const [renamingPageIndex, setRenamingPageIndex] = useState<number | null>(null);
+  const [renamingPageTitle, setRenamingPageTitle] = useState("");
+  const [managedAssetUrls, setManagedAssetUrls] = useState<Record<string, string>>({});
+  const historyPastRef = useRef<DocumentFile[]>([]);
+  const historyFutureRef = useRef<DocumentFile[]>([]);
+  const persistedSnapshotRef = useRef(serializeDocument(initialDocumentRef.current));
+  const [activePageIndex, setActivePageIndex] = useState(0);
+  const [swipedPageIndex, setSwipedPageIndex] = useState<number | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
 
   const selectedTextNode = (
     selectedNodeIds.length === 1
       ? documentFile.nodes.find((node): node is TextNodeModel => node.id === selectedNodeIds[0] && node.type === "text")
       : undefined
   );
+  const pageCount = Math.max(documentFile.appearance.pages.count, inferRequiredPageCount(documentFile));
+  const visiblePageNodes = documentFile.nodes
+    .filter((node) => node.pageIndex === activePageIndex)
+    .sort((left, right) => left.z - right.z);
+  const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
+  const pageSummaries = Array.from({ length: pageCount }, (_, index) => {
+    const explicitTitle = documentFile.appearance.pages.titles?.[index]?.trim();
+    if (explicitTitle) {
+      return explicitTitle;
+    }
 
-  const patchDocument = (updater: (current: DocumentFile) => DocumentFile, markDirty = true) => {
-    setDocumentFile((current) => {
-      const next = updater(current);
-      const rect = canvasRef.current?.getBoundingClientRect();
+    const firstTextNode = documentFile.nodes
+      .filter((node): node is TextNodeModel => node.type === "text" && node.pageIndex === index)
+      .sort((left, right) => (left.y - right.y) || (left.x - right.x) || (left.z - right.z))[0];
+    const firstLine = firstTextNode
+      ? plainTextFromRichTextDoc(firstTextNode.content).split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0)
+      : undefined;
 
-      if (!rect) {
-        return next;
+    return firstLine ?? `空白页 ${index + 1}`;
+  });
+
+  useEffect(() => {
+    refreshWorkspaceEntries().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (currentSavePath) {
+      expandDirectoriesForFile(currentSavePath);
+    }
+  }, [currentSavePath, workspaceRootPath]);
+
+  useEffect(() => {
+    if (!sidebarContextMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".sidebar-context-menu")) {
+        return;
       }
+      setSidebarContextMenu(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSidebarContextMenu(null);
+      }
+    };
 
-      return {
-        ...next,
-        viewState: clampViewStateToPage(next.viewState, next.pageBounds, rect),
-      };
-    });
-    if (markDirty) {
-      setIsDirty(true);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sidebarContextMenu]);
+
+  useEffect(() => {
+    setStoredPageIndex(documentFile.meta.id, activePageIndex);
+  }, [activePageIndex, documentFile.meta.id]);
+
+  const syncEditorStateToDocument = (nextDocument: DocumentFile) => {
+    const nextNodeIds = new Set(nextDocument.nodes.map((node) => node.id));
+    setSelectedNodeIds((current) => current.filter((id) => nextNodeIds.has(id)));
+    setEditingNodeId((current) => (current && nextNodeIds.has(current) ? current : null));
+  };
+
+  const updateDirtyFromDocument = (nextDocument: DocumentFile) => {
+    setIsDirty(serializeDocument(nextDocument) !== persistedSnapshotRef.current);
+  };
+
+  const clampDocumentToViewport = (nextDocument: DocumentFile) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    return rect
+      ? {
+          ...nextDocument,
+          viewState: clampViewStateToPage(nextDocument.viewState, nextDocument.pageBounds, rect),
+        }
+      : nextDocument;
+  };
+
+  const pushHistory = (snapshot: DocumentFile) => {
+    historyPastRef.current = [...historyPastRef.current, snapshot].slice(-100);
+    historyFutureRef.current = [];
+  };
+
+  const resetHistory = () => {
+    historyPastRef.current = [];
+    historyFutureRef.current = [];
+  };
+
+  const clearCurrentFileBinding = () => {
+    fileHandleRef.current = null;
+    setActiveFileHandle(null);
+    setCurrentSavePath(null);
+  };
+
+  const expandDirectoriesForFile = (filePath: string) => {
+    if (!workspaceRootPath || !filePath.startsWith(workspaceRootPath)) {
+      return;
+    }
+
+    const relativePath = filePath.slice(workspaceRootPath.length).replace(/^[\\/]+/, "");
+    const segments = relativePath.split(/[\\/]/).filter(Boolean);
+    if (segments.length <= 1) {
+      return;
+    }
+
+    const separator = workspaceRootPath.includes("\\") ? "\\" : "/";
+    const nextDirectories: string[] = [];
+    let currentPath = workspaceRootPath;
+
+    for (const segment of segments.slice(0, -1)) {
+      currentPath = `${currentPath}${separator}${segment}`;
+      nextDirectories.push(currentPath);
+    }
+
+    setExpandedDirectories((current) => Array.from(new Set([...current, ...nextDirectories])));
+  };
+
+  const refreshWorkspaceEntries = async () => {
+    if (!window.electronApp?.listWorkspaceEntries) {
+      return;
+    }
+
+    setWorkspaceLoading(true);
+    try {
+      const result = await window.electronApp.listWorkspaceEntries();
+      setWorkspaceRootPath(result.rootPath);
+      setWorkspaceEntries(result.entries);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : "读取工作目录失败。");
+    } finally {
+      setWorkspaceLoading(false);
     }
   };
 
-  const settleDocumentLayout = (document: DocumentFile) => {
-    const nextPageBounds = fitPageBoundsToNodes(document.nodes);
+  const clearAutosave = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (window.electronApp?.clearAutosaveDocument) {
+      void window.electronApp.clearAutosaveDocument();
+      return;
+    }
+
+    window.localStorage.removeItem(AUTOSAVE_STORAGE_KEY);
+  };
+
+  const syncPageSelection = (nextDocument: DocumentFile) => {
+    const nextPageCount = Math.max(nextDocument.appearance.pages.count, inferRequiredPageCount(nextDocument));
+    setActivePageIndex((current) => Math.min(current, nextPageCount - 1));
+  };
+
+  const applyDocumentState = (
+    updater: DocumentFile | ((current: DocumentFile) => DocumentFile),
+    options?: {
+      markDirty?: boolean;
+      recordHistory?: boolean;
+      historyBase?: DocumentFile | null;
+      clearFuture?: boolean;
+    },
+  ) => {
+    const currentDocument = documentFile;
+    const resolved = typeof updater === "function"
+      ? (updater as (current: DocumentFile) => DocumentFile)(currentDocument)
+      : updater;
+    const nextDocument = clampDocumentToViewport(resolved);
+
+    if (serializeDocument(currentDocument) === serializeDocument(nextDocument)) {
+      return;
+    }
+
+    if (options?.recordHistory) {
+      pushHistory(options.historyBase ?? currentDocument);
+    } else if (options?.clearFuture) {
+      historyFutureRef.current = [];
+    }
+
+    setDocumentFile(nextDocument);
+    syncEditorStateToDocument(nextDocument);
+    syncPageSelection(nextDocument);
+    if (options?.markDirty === false) {
+      setIsDirty(false);
+    } else {
+      updateDirtyFromDocument(nextDocument);
+    }
+  };
+
+  const loadIntoEditor = (
+    loaded: DocumentFile,
+    options?: {
+      savePath?: string | null;
+      fileHandle?: FileSystemFileHandle | null;
+    },
+  ) => {
     const rect = canvasRef.current?.getBoundingClientRect();
+    const nextDocument = rect
+      ? {
+          ...loaded,
+          viewState: clampViewStateToPage(loaded.viewState, loaded.pageBounds, rect),
+        }
+      : loaded;
+
+    persistedSnapshotRef.current = serializeDocument(nextDocument);
+    resetHistory();
+    setDocumentFile(nextDocument);
+    setActivePageIndex(getStoredPageIndex(nextDocument.meta.id, nextDocument.appearance.pages.count));
+    setCurrentSavePath(options?.savePath ?? null);
+    fileHandleRef.current = options?.fileHandle ?? null;
+    setActiveFileHandle(fileHandleRef.current);
+    setManagedAssetUrls({});
+    setSelectedNodeIds([]);
+    setEditingNodeId(null);
+    setErrorMessage(null);
+    setIsDirty(false);
+    setAutosaveRestoreAvailable(false);
+    setAutosaveStatus("idle");
+  };
+
+  const applyAutosaveDocument = (raw: string) => {
+    const restored = parseDocumentSchema(JSON.parse(raw));
+    loadIntoEditor(restored);
+    setAutosaveRestoreAvailable(false);
+    setAutosaveStatus("saved");
+  };
+
+  const patchDocument = (updater: (current: DocumentFile) => DocumentFile, markDirty = true) => {
+    applyDocumentState(updater, {
+      markDirty,
+      recordHistory: markDirty,
+      clearFuture: markDirty,
+    });
+  };
+
+  const settleDocumentLayout = (document: DocumentFile) => {
+    const nodeBounds = fitPageBoundsToNodes(document.nodes);
+    const nextPageBounds = {
+      ...nodeBounds,
+      h: Math.max(nodeBounds.h, document.appearance.pages.height),
+    };
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const nextPageCount = Math.max(document.appearance.pages.count, inferRequiredPageCount(document));
 
     return {
       ...document,
+      appearance: {
+        ...document.appearance,
+        pages: {
+          ...document.appearance.pages,
+          count: nextPageCount,
+        },
+      },
       pageBounds: nextPageBounds,
       viewState: rect ? clampViewStateToPage(document.viewState, nextPageBounds, rect) : document.viewState,
     };
@@ -308,28 +681,195 @@ export const App = () => {
       return;
     }
 
-    setDocumentFile(createEmptyDocument());
-    setSelectedNodeIds([]);
-    setEditingNodeId(null);
-    setErrorMessage(null);
-    setIsDirty(false);
+    const nextDocument = createEmptyDocument();
+    loadIntoEditor(nextDocument);
+    clearAutosave();
+
+    if (window.electronApp?.saveDocumentToPath) {
+      void saveDocumentVersion(nextDocument, {
+        autosave: true,
+        filePath: null,
+        fileHandle: null,
+      });
+    }
   };
 
-  const handleSave = () => {
-    const nextDocument = touchDocument(documentFile);
-    saveDocumentToDisk(nextDocument, fileNameFromMeta(nextDocument));
+  const handleSave = async () => {
+    await saveCurrentDocument();
+  };
+
+  const saveDocumentVersion = async (
+    nextDocument: DocumentFile,
+    options: {
+      forcePrompt?: boolean;
+      autosave?: boolean;
+      filePath?: string | null;
+      fileHandle?: FileSystemFileHandle | null;
+    } = {},
+  ) => {
+    const saveResult = await saveDocumentToDisk(nextDocument, {
+      fileName: fileNameFromMeta(nextDocument),
+      filePath: "filePath" in options ? options.filePath : currentSavePath,
+      fileHandle: "fileHandle" in options ? options.fileHandle : fileHandleRef.current,
+      forcePrompt: options.forcePrompt,
+    });
+    if (!saveResult) {
+      return null;
+    }
+    const savedPath = typeof saveResult === "string" ? saveResult : null;
+    const savedHandle = saveResult instanceof FileSystemFileHandle ? saveResult : null;
+    persistedSnapshotRef.current = serializeDocument(nextDocument);
     setDocumentFile(nextDocument);
+    if (savedPath) {
+      setCurrentSavePath(savedPath);
+      expandDirectoriesForFile(savedPath);
+    }
+    if (savedHandle) {
+      fileHandleRef.current = savedHandle;
+      setActiveFileHandle(savedHandle);
+    }
+    setActivePageIndex(Math.min(activePageIndex, nextDocument.appearance.pages.count - 1));
     setIsDirty(false);
+    setAutosaveStatus(options.autosave ? "saved" : "idle");
+    clearAutosave();
+    refreshWorkspaceEntries().catch(() => {});
+    return savedPath;
   };
 
-  const handleOpenClick = () => {
+  const saveCurrentDocument = async (forcePrompt = false) => {
+    const nextDocument = touchDocument(documentFile);
+    return saveDocumentVersion(nextDocument, { forcePrompt });
+  };
+
+  const handleSaveAs = async () => {
+    await saveCurrentDocument(true);
+  };
+
+  const handleUndo = () => {
+    const previous = historyPastRef.current.at(-1);
+    if (!previous) {
+      return;
+    }
+
+    historyPastRef.current = historyPastRef.current.slice(0, -1);
+    historyFutureRef.current = [documentFile, ...historyFutureRef.current].slice(0, 100);
+    applyDocumentState(previous, { clearFuture: false });
+  };
+
+  const handleRedo = () => {
+    const next = historyFutureRef.current[0];
+    if (!next) {
+      return;
+    }
+
+    historyFutureRef.current = historyFutureRef.current.slice(1);
+    historyPastRef.current = [...historyPastRef.current, documentFile].slice(-100);
+    applyDocumentState(next, { clearFuture: false });
+  };
+
+  const handleOpenClick = async () => {
     if (!canDiscardUnsavedChanges(isDirty)) {
       return;
     }
 
-    openInputRef.current?.click();
+    if (window.electronApp) {
+      try {
+        const result = await window.electronApp.openDocumentFromPath();
+        if (!result) {
+          return;
+        }
+
+        const loaded = loadDocumentFromRaw({
+          fileName: result.fileName,
+          rawText: result.rawText,
+          bytes: new Uint8Array(result.bytes),
+        });
+
+        loadIntoEditor(loaded, {
+          savePath: result.filePath,
+        });
+        expandDirectoriesForFile(result.filePath);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
+      }
+      return;
+    }
+
+    try {
+      const result = await openFileWithPicker();
+      if (!result) {
+        return;
+      }
+
+      const loaded = await loadDocumentFromFile(result.file);
+      loadIntoEditor(loaded, {
+        fileHandle: result.handle,
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
+    }
   };
   const handleImageClick = () => imageInputRef.current?.click();
+  const handleAttachmentClick = async () => {
+    if (window.electronApp?.pickAndImportAttachment) {
+      const documentPath = currentSavePath ?? await saveCurrentDocument(true);
+      if (!documentPath) {
+        return;
+      }
+
+      try {
+        const imported = await window.electronApp.pickAndImportAttachment({ documentPath });
+        if (!imported) {
+          return;
+        }
+
+        const assetId = createAssetId();
+        const isPdf = imported.mimeType === "application/pdf" || imported.name.toLowerCase().endsWith(".pdf");
+        const width = isPdf ? 720 : 360;
+        const height = isPdf ? 920 : 160;
+        const node = {
+          ...createImageNode(0, 0, assetId, width, height),
+          style: {
+            kind: isPdf ? "pdf-preview" : "attachment-preview",
+          },
+        };
+
+        patchDocument((current) => {
+          const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+          const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
+          return addImageNodeToDocument(
+            current,
+            {
+              ...node,
+              pageIndex: activePageIndex,
+              x: insertionPoint.x + offset.x,
+              y: insertionPoint.y + offset.y,
+            },
+            {
+              id: assetId,
+              type: isPdf ? "pdf" : "file",
+              storage: "managed",
+              mimeType: imported.mimeType,
+              name: imported.name,
+              relativePath: imported.relativePath,
+              sizeBytes: imported.sizeBytes,
+            },
+          );
+        });
+        setManagedAssetUrls((current) => ({
+          ...current,
+          [assetId]: imported.fileUrl,
+        }));
+        setSelectedNodeIds([node.id]);
+        setEditingNodeId(null);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "附件导入失败。");
+      }
+      return;
+    }
+
+    attachmentInputRef.current?.click();
+  };
   const handleInsertTable = () => {
     if (editingNodeId) {
       setEditorCommand({
@@ -404,6 +944,18 @@ export const App = () => {
     });
   };
 
+  const handleSetFontSize = (fontSize: string) => {
+    if (!editingNodeId) {
+      return;
+    }
+
+    setEditorCommand({
+      type: "set-font-size",
+      fontSize,
+      nonce: editorCommandNonceRef.current++,
+    });
+  };
+
   const handleSetHighlightColor = (color: string) => {
     if (!editingNodeId) {
       return;
@@ -414,6 +966,55 @@ export const App = () => {
       color,
       nonce: editorCommandNonceRef.current++,
     });
+  };
+
+  const handleSetPageBackground = (color: string) => {
+    patchDocument((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        pageBackground: color,
+      },
+    }));
+  };
+
+  const handleSetGridEnabled = (enabled: boolean) => {
+    patchDocument((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        grid: {
+          ...current.appearance.grid,
+          enabled,
+        },
+      },
+    }));
+  };
+
+  const handleSetGridColor = (color: string) => {
+    patchDocument((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        grid: {
+          ...current.appearance.grid,
+          color,
+        },
+      },
+    }));
+  };
+
+  const handleSetGridSize = (size: number) => {
+    patchDocument((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        grid: {
+          ...current.appearance.grid,
+          size,
+        },
+      },
+    }));
   };
 
   const handleZoomChange = (zoom: number) => {
@@ -436,7 +1037,10 @@ export const App = () => {
   };
 
   const handleAddTextAt = (x: number, y: number) => {
-    const node = createTextNode(x, y);
+    const node = {
+      ...createTextNode(x, y),
+      pageIndex: activePageIndex,
+    };
 
     patchDocument((current) => addNodeToDocument(current, node));
     setSelectedNodeIds([node.id]);
@@ -450,6 +1054,7 @@ export const App = () => {
 
     const node = {
       ...createTextNode(x, y),
+      pageIndex: activePageIndex,
       content: plainTextToRichTextDoc(text),
     };
 
@@ -467,22 +1072,242 @@ export const App = () => {
 
     try {
       const loaded = await loadDocumentFromFile(file);
-      const rect = canvasRef.current?.getBoundingClientRect();
-      setDocumentFile(
-        rect
-          ? {
-              ...loaded,
-              viewState: clampViewStateToPage(loaded.viewState, loaded.pageBounds, rect),
-            }
-          : loaded,
-      );
-      setSelectedNodeIds([]);
-      setEditingNodeId(null);
-      setErrorMessage(null);
-      setIsDirty(false);
+      loadIntoEditor(loaded, {
+        savePath: ((file as File & { path?: string }).path) ?? null,
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
     }
+  };
+
+  const handleOpenWorkspaceFile = async (filePath: string) => {
+    if (!window.electronApp?.openDocumentAtPath) {
+      return;
+    }
+
+    if (!canDiscardUnsavedChanges(isDirty)) {
+      return;
+    }
+
+    try {
+      const result = await window.electronApp.openDocumentAtPath({ filePath });
+      if (!result) {
+        return;
+      }
+
+      const loaded = loadDocumentFromRaw({
+        fileName: result.fileName,
+        rawText: result.rawText,
+        bytes: new Uint8Array(result.bytes),
+      });
+
+      loadIntoEditor(loaded, {
+        savePath: result.filePath,
+      });
+      expandDirectoriesForFile(result.filePath);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
+    }
+  };
+
+  const handleToggleDirectory = (directoryPath: string) => {
+    setExpandedDirectories((current) =>
+      current.includes(directoryPath)
+        ? current.filter((item) => item !== directoryPath)
+        : [...current, directoryPath],
+    );
+  };
+
+  const handleBeginRenameWorkspaceFile = (filePath: string, currentName: string) => {
+    setRenamingFilePath(filePath);
+    setRenamingFileName(currentName);
+  };
+
+  const handleCommitWorkspaceFileRename = async () => {
+    if (!renamingFilePath) {
+      return;
+    }
+
+    if (!window.electronApp?.renameDocumentAtPath) {
+      window.alert("重命名需要在桌面版中使用。");
+      setRenamingFilePath(null);
+      setRenamingFileName("");
+      return;
+    }
+
+    const nextName = renamingFileName.trim();
+    if (!nextName) {
+      setRenamingFilePath(null);
+      setRenamingFileName("");
+      return;
+    }
+
+    try {
+      const nextPath = await window.electronApp.renameDocumentAtPath({
+        filePath: renamingFilePath,
+        baseName: nextName,
+      });
+
+      if (currentSavePath === renamingFilePath) {
+        setCurrentSavePath(nextPath);
+      }
+
+      setRenamingFilePath(null);
+      setRenamingFileName("");
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "重命名失败。");
+    }
+  };
+
+  const handleCancelWorkspaceFileRename = () => {
+    setRenamingFilePath(null);
+    setRenamingFileName("");
+  };
+
+  const handleBeginRenamePage = (pageIndex: number) => {
+    setRenamingPageIndex(pageIndex);
+    setRenamingPageTitle(documentFile.appearance.pages.titles?.[pageIndex] ?? "");
+  };
+
+  const handleCommitPageRename = () => {
+    if (renamingPageIndex === null) {
+      return;
+    }
+
+    handlePageTitleChange(renamingPageIndex, renamingPageTitle.trim());
+    setRenamingPageIndex(null);
+    setRenamingPageTitle("");
+  };
+
+  const handleCancelPageRename = () => {
+    setRenamingPageIndex(null);
+    setRenamingPageTitle("");
+  };
+
+  const handleFileContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    filePath: string,
+    currentName: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSidebarContextMenu({
+      kind: "file",
+      x: event.clientX,
+      y: event.clientY,
+      filePath,
+      fileName: currentName,
+    });
+  };
+
+  const handlePageContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    pageIndex: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSidebarContextMenu({
+      kind: "page",
+      x: event.clientX,
+      y: event.clientY,
+      pageIndex,
+    });
+  };
+
+  const handleSelectPage = (pageNumber: number) => {
+    setSwipedPageIndex(null);
+    setSwipeOffset(0);
+    setSelectedNodeIds([]);
+    setEditingNodeId(null);
+    setActivePageIndex(pageNumber - 1);
+  };
+
+  const handleAddPage = () => {
+    setSwipedPageIndex(null);
+    setSwipeOffset(0);
+    patchDocument((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        pages: {
+          ...current.appearance.pages,
+          count: current.appearance.pages.count + 1,
+          titles: [...(current.appearance.pages.titles ?? []), ""],
+        },
+      },
+    }));
+    setActivePageIndex(pageCount);
+  };
+
+  const handleDeletePage = (pageIndex: number) => {
+    if (pageCount <= 1) {
+      return;
+    }
+
+    setSwipedPageIndex(null);
+    setSwipeOffset(0);
+    patchDocument((current) => settleDocumentLayout({
+      ...current,
+      nodes: current.nodes
+        .filter((node) => node.pageIndex !== pageIndex)
+        .map((node) => (node.pageIndex > pageIndex ? { ...node, pageIndex: node.pageIndex - 1 } : node)),
+      appearance: {
+        ...current.appearance,
+        pages: {
+          ...current.appearance.pages,
+          count: Math.max(1, current.appearance.pages.count - 1),
+          titles: (current.appearance.pages.titles ?? []).filter((_, index) => index !== pageIndex),
+        },
+      },
+    }));
+    setActivePageIndex((current) => Math.max(0, Math.min(current, pageCount - 2)));
+  };
+
+  const handlePageTitleChange = (pageIndex: number, title: string) => {
+    patchDocument((current) => {
+      const titles = Array.from(
+        { length: Math.max(current.appearance.pages.count, pageCount) },
+        (_, index) => current.appearance.pages.titles?.[index] ?? "",
+      );
+      titles[pageIndex] = title;
+
+      return {
+        ...current,
+        appearance: {
+          ...current.appearance,
+          pages: {
+            ...current.appearance.pages,
+            titles,
+          },
+        },
+      };
+    });
+  };
+
+  const handleRestoreAutosave = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const readAutosave = window.electronApp?.getAutosaveDocument
+      ? window.electronApp.getAutosaveDocument()
+      : Promise.resolve(window.localStorage.getItem(AUTOSAVE_STORAGE_KEY));
+
+    readAutosave.then((raw) => {
+      if (!raw) {
+        setAutosaveRestoreAvailable(false);
+        return;
+      }
+      applyAutosaveDocument(raw);
+    }).catch(() => {
+      clearAutosave();
+      setAutosaveRestoreAvailable(false);
+    });
+  };
+
+  const handleDiscardAutosave = () => {
+    clearAutosave();
+    setAutosaveRestoreAvailable(false);
   };
 
   const handleAddText = () => {
@@ -492,11 +1317,12 @@ export const App = () => {
 
     const node = createTextNode(0, 0);
     patchDocument((current) => {
-      const insertionPoint = getPageInsertionPoint(current);
-      const offset = getInsertOffset(current.nodes.length);
+      const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+      const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
 
       return addNodeToDocument(current, {
         ...node,
+        pageIndex: activePageIndex,
         x: insertionPoint.x + offset.x,
         y: insertionPoint.y + offset.y,
       });
@@ -582,12 +1408,13 @@ export const App = () => {
         const node = createImageNode(0, 0, assetId, width, height);
 
         patchDocument((current) => {
-          const insertionPoint = getPageInsertionPoint(current);
-          const offset = getInsertOffset(current.nodes.length);
+          const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+          const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
           return addImageNodeToDocument(
             current,
             {
               ...node,
+              pageIndex: activePageIndex,
               x: insertionPoint.x + offset.x,
               y: insertionPoint.y + offset.y,
             },
@@ -607,6 +1434,56 @@ export const App = () => {
     };
     reader.onerror = () => setErrorMessage("图片读取失败。");
     reader.readAsDataURL(file);
+  };
+
+  const handleImportAttachment = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const assetId = createAssetId();
+      const data = await readFileAsDataUrl(file);
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      const width = isPdf ? 720 : 360;
+      const height = isPdf ? 920 : 160;
+      const node = {
+        ...createImageNode(0, 0, assetId, width, height),
+        style: {
+          kind: isPdf ? "pdf-preview" : "attachment-preview",
+        },
+      };
+
+      patchDocument((current) => {
+        const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+        const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
+        return addImageNodeToDocument(
+          current,
+          {
+            ...node,
+            pageIndex: activePageIndex,
+            x: insertionPoint.x + offset.x,
+            y: insertionPoint.y + offset.y,
+          },
+          {
+            id: assetId,
+            type: isPdf ? "pdf" : "file",
+            storage: "embedded",
+            mimeType: file.type || "application/octet-stream",
+            name: file.name,
+            data,
+            sizeBytes: file.size,
+          },
+        );
+      });
+
+      setSelectedNodeIds([node.id]);
+      setEditingNodeId(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "附件读取失败。");
+    }
   };
 
   const handlePasteImageIntoText = async (file: File) => {
@@ -642,6 +1519,10 @@ export const App = () => {
   };
 
   useEffect(() => {
+    if (window.electronApp) {
+      return;
+    }
+
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!isDirty) {
         return;
@@ -664,14 +1545,122 @@ export const App = () => {
     }
   }, [editingNodeId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const readAutosave = window.electronApp?.getAutosaveDocument
+      ? window.electronApp.getAutosaveDocument()
+      : Promise.resolve(window.localStorage.getItem(AUTOSAVE_STORAGE_KEY));
+
+    readAutosave.then((raw) => {
+      if (!raw) {
+        return;
+      }
+      applyAutosaveDocument(raw);
+    }).catch(() => {
+      clearAutosave();
+    });
+  }, []);
+
   useEffect(() => () => {
     if (zoomSettleTimeoutRef.current !== null) {
       window.clearTimeout(zoomSettleTimeoutRef.current);
     }
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+    }
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!isDirty) {
+      if (autosaveTimeoutRef.current !== null) {
+        window.clearTimeout(autosaveTimeoutRef.current);
+        autosaveTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    setAutosaveStatus("pending");
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      const saveAutosave = window.electronApp?.saveDocumentToPath
+        ? saveDocumentVersion(touchDocument(documentFile), { autosave: true }).then(() => undefined)
+        : (() => {
+            const content = serializeDocumentJson(documentFile);
+            return (window.electronApp?.saveAutosaveDocument
+              ? window.electronApp.saveAutosaveDocument(content)
+              : Promise.resolve(window.localStorage.setItem(AUTOSAVE_STORAGE_KEY, content)))
+              .then(() => setAutosaveStatus("saved"));
+          })();
+
+      saveAutosave.catch(() => setAutosaveStatus("idle"));
+      autosaveTimeoutRef.current = null;
+    }, AUTOSAVE_DELAY_MS);
+  }, [currentSavePath, documentFile, isDirty]);
+
+  useEffect(() => {
+    const managedAssets = Object.values(documentFile.assets).filter((asset) =>
+      asset.storage === "managed" && typeof asset.relativePath === "string" && asset.relativePath.length > 0,
+    );
+
+    if (managedAssets.length === 0 || !currentSavePath || !window.electronApp?.resolveAttachmentUrl) {
+      setManagedAssetUrls({});
+      return;
+    }
+
+    let canceled = false;
+
+    Promise.all(managedAssets.map(async (asset) => {
+      const resolvedUrl = await window.electronApp!.resolveAttachmentUrl({
+        documentPath: currentSavePath,
+        relativePath: asset.relativePath!,
+      });
+      return [asset.id, resolvedUrl ?? ""] as const;
+    })).then((entries) => {
+      if (canceled) {
+        return;
+      }
+
+      setManagedAssetUrls(Object.fromEntries(entries));
+    }).catch(() => {
+      if (!canceled) {
+        setManagedAssetUrls({});
+      }
+    });
+
+    return () => {
+      canceled = true;
+    };
+  }, [currentSavePath, documentFile.assets]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const lowerKey = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.defaultPrevented) {
+        if (lowerKey === "z" && !event.shiftKey && !isFormFieldTarget(event.target)) {
+          event.preventDefault();
+          handleUndo();
+          return;
+        }
+
+        if ((lowerKey === "z" && event.shiftKey) || lowerKey === "y") {
+          if (!isFormFieldTarget(event.target)) {
+            event.preventDefault();
+            handleRedo();
+            return;
+          }
+        }
+      }
+
       if (
         !editingNodeId &&
         (event.key === "Delete" || event.key === "Backspace") &&
@@ -768,7 +1757,7 @@ export const App = () => {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("paste", handlePaste, true);
     };
-  }, [editingNodeId, selectedTextNode, selectedNodeIds]);
+  }, [documentFile, editingNodeId, selectedTextNode, selectedNodeIds]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -867,8 +1856,10 @@ export const App = () => {
 
         if (didMove) {
           suppressNextCanvasClickRef.current = true;
-          setDocumentFile((current) => settleDocumentLayout(current));
-          setIsDirty(true);
+          applyDocumentState((current) => settleDocumentLayout(current), {
+            recordHistory: true,
+            historyBase: transientHistoryBaseRef.current,
+          });
         }
       }
 
@@ -878,7 +1869,7 @@ export const App = () => {
 
         if (movedEnough) {
           const selectedIds = documentFile.nodes
-            .filter((node) => rectsIntersect(selectionRect, node))
+            .filter((node) => node.pageIndex === activePageIndex && rectsIntersect(selectionRect, node))
             .map((node) => node.id);
 
           setSelectedNodeIds(selectedIds);
@@ -892,12 +1883,15 @@ export const App = () => {
 
         if (didMove) {
           suppressNextCanvasClickRef.current = true;
-          setDocumentFile((current) => settleDocumentLayout(current));
-          setIsDirty(true);
+          applyDocumentState((current) => settleDocumentLayout(current), {
+            recordHistory: true,
+            historyBase: transientHistoryBaseRef.current,
+          });
         }
       }
 
       setInteraction({ type: "none" });
+      transientHistoryBaseRef.current = null;
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -907,7 +1901,7 @@ export const App = () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [documentFile, interaction]);
+  }, [activePageIndex, documentFile, interaction]);
 
   const startNodeDrag = (
     event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation"> & { button?: number },
@@ -929,6 +1923,7 @@ export const App = () => {
     event.stopPropagation();
     event.preventDefault();
     dragDidMoveRef.current = false;
+    transientHistoryBaseRef.current = documentFile;
     suppressNextCanvasClickRef.current = true;
     const nodeIds = selectedNodeIds.includes(node.id) ? selectedNodeIds : [node.id];
     setSelectedNodeIds(nodeIds);
@@ -954,6 +1949,7 @@ export const App = () => {
     event.stopPropagation();
     event.preventDefault();
     resizeDidMoveRef.current = false;
+    transientHistoryBaseRef.current = documentFile;
     setInteraction({
       type: "resize-node",
       nodeId: node.id,
@@ -987,21 +1983,36 @@ export const App = () => {
       <Toolbar
         zoom={documentFile.viewState.zoom}
         dirty={isDirty}
+        canUndo={historyPastRef.current.length > 0}
+        canRedo={historyFutureRef.current.length > 0}
         canInsertTable={editingNodeId !== null || !!selectedTextNode}
         canInsertTableColumn={editingNodeId !== null}
         canFormatText={editingNodeId !== null}
         onNew={handleNewDocument}
         onOpen={handleOpenClick}
         onSave={handleSave}
+        onSaveAs={handleSaveAs}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onAddText={handleAddText}
         onAddImage={handleImageClick}
+        onAddAttachment={handleAttachmentClick}
         onInsertTable={handleInsertTable}
         onInsertTableColumn={handleInsertTableColumn}
         onInsertTableColumnLeft={handleInsertTableColumnLeft}
         onDeleteTableColumn={handleDeleteTableColumn}
         onSetFontFamily={handleSetFontFamily}
+        onSetFontSize={handleSetFontSize}
         onSetTextColor={handleSetTextColor}
         onSetHighlightColor={handleSetHighlightColor}
+        pageBackground={documentFile.appearance.pageBackground}
+        gridEnabled={documentFile.appearance.grid.enabled}
+        gridColor={documentFile.appearance.grid.color}
+        gridSize={documentFile.appearance.grid.size}
+        onSetPageBackground={handleSetPageBackground}
+        onSetGridEnabled={handleSetGridEnabled}
+        onSetGridColor={handleSetGridColor}
+        onSetGridSize={handleSetGridSize}
         onZoomChange={handleZoomChange}
       />
 
@@ -1019,12 +2030,274 @@ export const App = () => {
         hidden
         onChange={handleImportImage}
       />
+      <input
+        ref={attachmentInputRef}
+        type="file"
+        accept=".pdf,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.md"
+        hidden
+        onChange={handleImportAttachment}
+      />
+
+      {autosaveRestoreAvailable ? (
+        <div className="autosave-banner">
+          <span>发现自动保存草稿，是否恢复？</span>
+          <div className="autosave-banner-actions">
+            <button type="button" onClick={handleRestoreAutosave}>恢复</button>
+            <button type="button" onClick={handleDiscardAutosave}>丢弃</button>
+          </div>
+        </div>
+      ) : null}
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
-      <div
-        ref={canvasRef}
-        className="canvas-shell"
+      {sidebarContextMenu ? (
+        <div
+          className="sidebar-context-menu"
+          style={{
+            left: sidebarContextMenu.x,
+            top: sidebarContextMenu.y,
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {sidebarContextMenu.kind === "file" ? (
+            <>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleOpenWorkspaceFile(sidebarContextMenu.filePath);
+                }}
+              >
+                打开
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleBeginRenameWorkspaceFile(sidebarContextMenu.filePath, sidebarContextMenu.fileName);
+                }}
+              >
+                重命名
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleSelectPage(sidebarContextMenu.pageIndex + 1);
+                }}
+              >
+                切换到此页
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleAddPage();
+                }}
+              >
+                新增页
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleBeginRenamePage(sidebarContextMenu.pageIndex);
+                }}
+              >
+                重命名
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item danger"
+                disabled={pageCount <= 1}
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleDeletePage(sidebarContextMenu.pageIndex);
+                }}
+              >
+                删除页
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      <div className="workspace-shell">
+        <aside className="file-sidebar">
+          <FileSidebar
+            entries={workspaceEntries}
+            rootPath={workspaceRootPath}
+            currentFilePath={currentSavePath}
+            expandedDirectories={expandedDirectories}
+            loading={workspaceLoading}
+            errorMessage={workspaceError}
+            onToggleDirectory={handleToggleDirectory}
+            onOpenFile={handleOpenWorkspaceFile}
+            onFileContextMenu={handleFileContextMenu}
+            renamingFilePath={renamingFilePath}
+            renamingFileName={renamingFileName}
+            onRenamingFileNameChange={setRenamingFileName}
+            onCommitFileRename={handleCommitWorkspaceFileRename}
+            onCancelFileRename={handleCancelWorkspaceFileRename}
+            onRefresh={() => {
+              refreshWorkspaceEntries().catch(() => {});
+            }}
+          />
+        </aside>
+
+        <aside className="page-sidebar-column">
+          <section className="sidebar-panel page-sidebar">
+            <div className="sidebar-panel-header">
+              <div>
+                <span>页面</span>
+                <small>
+                  {autosaveStatus === "pending" ? "自动保存中" : autosaveStatus === "saved" ? "已自动保存" : "文档结构"}
+                </small>
+              </div>
+              <button type="button" className="sidebar-panel-action" onClick={handleAddPage}>新增页</button>
+            </div>
+            <div className="page-sidebar-list">
+            {Array.from({ length: pageCount }, (_, index) => {
+              const pageNumber = index + 1;
+              const isSwiped = swipedPageIndex === index;
+              const translateX = isSwiped ? Math.min(0, swipeOffset || -88) : 0;
+              return (
+                <div
+                  key={pageNumber}
+                  className={isSwiped ? "page-chip-row swiped" : "page-chip-row"}
+                  onPointerDown={(event) => {
+                    pageSwipeGestureRef.current = {
+                      pageIndex: index,
+                      pointerId: event.pointerId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      offsetX: isSwiped ? -88 : 0,
+                      isHorizontal: false,
+                      moved: false,
+                    };
+                  }}
+                  onPointerMove={(event) => {
+                    const gesture = pageSwipeGestureRef.current;
+                    if (!gesture || gesture.pageIndex !== index || gesture.pointerId !== event.pointerId) {
+                      return;
+                    }
+
+                    const deltaX = event.clientX - gesture.startX;
+                    const deltaY = event.clientY - gesture.startY;
+
+                    if (!gesture.isHorizontal) {
+                      if (Math.abs(deltaX) < 8 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+                        return;
+                      }
+                      gesture.isHorizontal = true;
+                    }
+
+                    gesture.moved = true;
+                    const nextOffset = clamp(gesture.offsetX + deltaX, -88, 0);
+                    gesture.offsetX = nextOffset;
+                    setSwipedPageIndex(index);
+                    setSwipeOffset(nextOffset);
+                    gesture.startX = event.clientX;
+                    gesture.startY = event.clientY;
+                    event.preventDefault();
+                  }}
+                  onPointerUp={(event) => {
+                    const gesture = pageSwipeGestureRef.current;
+                    if (!gesture || gesture.pageIndex !== index || gesture.pointerId !== event.pointerId) {
+                      return;
+                    }
+
+                    if (gesture.isHorizontal) {
+                      const shouldOpen = swipeOffset <= -44;
+                      setSwipedPageIndex(shouldOpen ? index : null);
+                      setSwipeOffset(shouldOpen ? -88 : 0);
+                      event.preventDefault();
+                    }
+
+                    window.setTimeout(() => {
+                      pageSwipeGestureRef.current = null;
+                    }, 0);
+                  }}
+                  onPointerCancel={() => {
+                    pageSwipeGestureRef.current = null;
+                    setSwipeOffset(0);
+                    setSwipedPageIndex(null);
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="page-chip-delete"
+                    onClick={() => handleDeletePage(index)}
+                    disabled={pageCount <= 1}
+                    aria-label={`删除${pageSummaries[index]}`}
+                  >
+                    删除
+                  </button>
+                  <button
+                    type="button"
+                    className={pageNumber - 1 === activePageIndex ? "page-chip active" : "page-chip"}
+                    style={{ transform: `translateX(${translateX}px)` }}
+                    onContextMenu={(event) => handlePageContextMenu(event, index)}
+                    onClick={() => {
+                      if (pageSwipeGestureRef.current?.moved) {
+                        pageSwipeGestureRef.current = null;
+                        return;
+                      }
+
+                      if (swipedPageIndex !== null && swipedPageIndex !== index) {
+                        setSwipedPageIndex(null);
+                        setSwipeOffset(0);
+                        return;
+                      }
+
+                      if (isSwiped) {
+                        setSwipedPageIndex(null);
+                        setSwipeOffset(0);
+                        return;
+                      }
+
+                      handleSelectPage(pageNumber);
+                    }}
+                  >
+                    {renamingPageIndex === index ? (
+                      <input
+                        className="page-chip-inline-input"
+                        autoFocus
+                        value={renamingPageTitle}
+                        onChange={(event) => setRenamingPageTitle(event.currentTarget.value)}
+                        onBlur={handleCommitPageRename}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            handleCommitPageRename();
+                          }
+                          if (event.key === "Escape") {
+                            handleCancelPageRename();
+                          }
+                        }}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      />
+                    ) : (
+                      <span className="page-chip-label">{pageSummaries[index]}</span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+            </div>
+          </section>
+        </aside>
+
+        <div
+          ref={canvasRef}
+          className="canvas-shell"
         tabIndex={0}
         onDragOver={(event) => {
           if (isCanvasNodeTarget(event.target)) {
@@ -1058,6 +2331,10 @@ export const App = () => {
           handleDropTextAt(point.x, point.y, plainText);
         }}
         onClick={() => {
+          if (swipedPageIndex !== null) {
+            setSwipedPageIndex(null);
+            setSwipeOffset(0);
+          }
           if (suppressNextCanvasClickRef.current) {
             suppressNextCanvasClickRef.current = false;
             return;
@@ -1154,12 +2431,24 @@ export const App = () => {
             ),
           }));
         }}
-      >
-        <div
-          className={`canvas-grid ${zoomTransitionActive ? "zoom-transition" : ""}`}
-          style={{
-            transform: `translate(${documentFile.viewState.cameraX}px, ${documentFile.viewState.cameraY}px) scale(${documentFile.viewState.zoom})`,
-          }}
+        >
+          <div className="canvas-header">
+            <input
+              className="canvas-header-title-input"
+              type="text"
+              value={currentPageTitle}
+              onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
+              placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
+            />
+            <div className="canvas-header-meta">最近更新：{formatUpdatedAt(documentFile.meta.updatedAt)}</div>
+          </div>
+          <div
+            className={`canvas-grid ${zoomTransitionActive ? "zoom-transition" : ""}`}
+            style={{
+              "--canvas-zoom": documentFile.viewState.zoom,
+              "--inverse-zoom": 1 / documentFile.viewState.zoom,
+              transform: `translate(${documentFile.viewState.cameraX}px, ${documentFile.viewState.cameraY}px) scale(${documentFile.viewState.zoom})`,
+            } as CSSProperties}
         >
           <div
             className="page-surface"
@@ -1167,12 +2456,24 @@ export const App = () => {
               transform: `translate(${documentFile.pageBounds.x}px, ${documentFile.pageBounds.y}px)`,
               width: documentFile.pageBounds.w,
               height: documentFile.pageBounds.h,
-            }}
-          />
-          {documentFile.nodes
-            .slice()
-            .sort((left, right) => left.z - right.z)
-            .map((node) => {
+              "--page-grid-color": documentFile.appearance.grid.color,
+              "--page-grid-size": `${documentFile.appearance.grid.size}px`,
+            } as CSSProperties}
+          >
+            <div
+              className={[
+                "page-sheet",
+                documentFile.appearance.grid.enabled ? "has-grid" : "",
+                "active",
+              ].filter(Boolean).join(" ")}
+              style={{
+                top: "0px",
+                height: `${documentFile.appearance.pages.height}px`,
+                backgroundColor: documentFile.appearance.pageBackground,
+              }}
+            />
+          </div>
+          {visiblePageNodes.map((node) => {
               if (node.type === "text") {
                 return (
                   <TextNode
@@ -1239,7 +2540,17 @@ export const App = () => {
                 <ImageNode
                   key={node.id}
                   node={node}
-                  asset={documentFile.assets[node.assetId]}
+                  asset={(() => {
+                    const asset = documentFile.assets[node.assetId];
+                    if (!asset || asset.storage !== "managed") {
+                      return asset;
+                    }
+
+                    return {
+                      ...asset,
+                      data: managedAssetUrls[asset.id],
+                    };
+                  })()}
                   selected={selectedNodeIds.includes(node.id)}
                   onSelect={() => selectNode(node.id)}
                   onPointerDown={(event) => startNodeDrag(event, node)}
@@ -1257,6 +2568,7 @@ export const App = () => {
               }}
             />
           ) : null}
+        </div>
         </div>
       </div>
     </div>

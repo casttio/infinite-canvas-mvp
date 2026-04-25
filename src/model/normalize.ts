@@ -1,5 +1,6 @@
 import type {
   CanvasNode,
+  DocumentAppearance,
   DocumentFile,
   RichTextBlock,
   RichTextDoc,
@@ -10,6 +11,10 @@ import type {
   RichTextTableRow,
   TextNode,
 } from "./types";
+import { createDefaultDocumentAppearance } from "./defaults";
+
+const getPageStep = (appearance: DocumentAppearance) =>
+  appearance.pages.height + appearance.pages.gap;
 
 const emptyParagraph = (): RichTextParagraph => ({
   type: "paragraph",
@@ -20,6 +25,9 @@ const normalizeInline = (inline: RichTextInline): RichTextInline => {
   if (inline.type === "text") {
     const fontFamily = typeof inline.fontFamily === "string" && inline.fontFamily.trim().length > 0
       ? inline.fontFamily.trim()
+      : undefined;
+    const fontSize = typeof inline.fontSize === "string" && inline.fontSize.trim().length > 0
+      ? inline.fontSize.trim()
       : undefined;
     const color = typeof inline.color === "string" && inline.color.trim().length > 0
       ? inline.color.trim()
@@ -32,6 +40,7 @@ const normalizeInline = (inline: RichTextInline): RichTextInline => {
       ...inline,
       marks: Array.isArray(inline.marks) ? inline.marks : [],
       ...(fontFamily ? { fontFamily } : {}),
+      ...(fontSize ? { fontSize } : {}),
       ...(color ? { color } : {}),
       ...(highlightColor ? { highlightColor } : {}),
     };
@@ -113,18 +122,97 @@ export const normalizeRichTextDoc = (doc: RichTextDoc): RichTextDoc => ({
   content: normalizeBlocks(doc.content),
 });
 
-const normalizeNode = (node: CanvasNode): CanvasNode => {
-  if (node.type !== "text") {
-    return node;
+const normalizeNode = (node: CanvasNode, appearance: DocumentAppearance, pageBounds: DocumentFile["pageBounds"]): CanvasNode => {
+  const step = getPageStep(appearance);
+  const explicitPageIndex = typeof node.pageIndex === "number" && Number.isFinite(node.pageIndex)
+    ? Math.max(0, Math.round(node.pageIndex))
+    : null;
+  const inferredPageIndex = Math.max(0, Math.floor((node.y - pageBounds.y) / step));
+  const pageIndex = explicitPageIndex ?? inferredPageIndex;
+  const localY = explicitPageIndex === null
+    ? node.y - pageIndex * step
+    : node.y;
+  const normalizedBase = {
+    ...node,
+    pageIndex,
+    x: Math.max(pageBounds.x, node.x),
+    y: Math.max(pageBounds.y, localY),
+  } as CanvasNode;
+
+  if (normalizedBase.type !== "text") {
+    return normalizedBase;
   }
 
   return {
-    ...node,
-    content: normalizeRichTextDoc((node as TextNode).content),
+    ...normalizedBase,
+    content: normalizeRichTextDoc((normalizedBase as TextNode).content),
   };
 };
 
-export const normalizeDocument = (document: DocumentFile): DocumentFile => ({
-  ...document,
-  nodes: document.nodes.map(normalizeNode),
-});
+const normalizeAppearance = (appearance: Partial<DocumentAppearance> | undefined): DocumentAppearance => {
+  const defaults = createDefaultDocumentAppearance();
+  const pageBackground = typeof appearance?.pageBackground === "string" && appearance.pageBackground.trim().length > 0
+    ? appearance.pageBackground.trim()
+    : defaults.pageBackground;
+  const gridColor = typeof appearance?.grid?.color === "string" && appearance.grid.color.trim().length > 0
+    ? appearance.grid.color.trim()
+    : defaults.grid.color;
+  const gridSize = typeof appearance?.grid?.size === "number" && Number.isFinite(appearance.grid.size)
+    ? Math.max(8, Math.min(96, Math.round(appearance.grid.size)))
+    : defaults.grid.size;
+  const pageCount = typeof appearance?.pages?.count === "number" && Number.isFinite(appearance.pages.count)
+    ? Math.max(1, Math.round(appearance.pages.count))
+    : defaults.pages.count;
+  const pageHeight = typeof appearance?.pages?.height === "number" && Number.isFinite(appearance.pages.height)
+    ? Math.max(600, Math.round(appearance.pages.height))
+    : defaults.pages.height;
+  const pageGap = typeof appearance?.pages?.gap === "number" && Number.isFinite(appearance.pages.gap)
+    ? Math.max(24, Math.round(appearance.pages.gap))
+    : defaults.pages.gap;
+  const pageTitles = Array.isArray(appearance?.pages?.titles)
+    ? appearance.pages.titles.map((title) => (typeof title === "string" ? title : ""))
+    : defaults.pages.titles ?? [];
+
+  return {
+    ...defaults,
+    ...(appearance ?? {}),
+    pageBackground,
+    grid: {
+      ...defaults.grid,
+      ...(appearance?.grid ?? {}),
+      color: gridColor,
+      size: gridSize,
+      enabled: Boolean(appearance?.grid?.enabled),
+    },
+    pages: {
+      ...defaults.pages,
+      ...(appearance?.pages ?? {}),
+      count: pageCount,
+      height: pageHeight,
+      gap: pageGap,
+      titles: pageTitles,
+    },
+  };
+};
+
+export const normalizeDocument = (document: DocumentFile): DocumentFile => {
+  const appearance = normalizeAppearance(document.appearance);
+  const nodes = document.nodes.map((node) => normalizeNode(node, appearance, document.pageBounds));
+  const inferredPageCount = nodes.reduce((maxPageCount, node) => Math.max(maxPageCount, node.pageIndex + 1), 1);
+
+  return {
+    ...document,
+    appearance: {
+      ...appearance,
+      pages: {
+        ...appearance.pages,
+        count: Math.max(appearance.pages.count, inferredPageCount),
+        titles: Array.from(
+          { length: Math.max(appearance.pages.count, inferredPageCount) },
+          (_, index) => appearance.pages.titles?.[index] ?? "",
+        ),
+      },
+    },
+    nodes,
+  };
+};

@@ -1,0 +1,98 @@
+export {};
+
+declare global {
+  interface WorkspaceFileEntry {
+    type: "file";
+    name: string;
+    path: string;
+    relativePath: string;
+  }
+
+  interface WorkspaceDirectoryEntry {
+    type: "directory";
+    name: string;
+    path: string;
+    relativePath: string;
+    children: WorkspaceEntry[];
+  }
+
+  type WorkspaceEntry = WorkspaceFileEntry | WorkspaceDirectoryEntry;
+
+  interface FilePickerAcceptType {
+    description?: string;
+    accept: Record<string, string[]>;
+  }
+
+  interface OpenFilePickerOptions {
+    multiple?: boolean;
+    types?: FilePickerAcceptType[];
+  }
+
+  interface SaveFilePickerOptions {
+    suggestedName?: string;
+    types?: FilePickerAcceptType[];
+  }
+
+  interface FileSystemWritableFileStream extends WritableStream {
+    write(data: FileSystemWriteChunkType): Promise<void>;
+    close(): Promise<void>;
+  }
+
+  interface FileSystemFileHandle {
+    getFile(): Promise<File>;
+    createWritable(): Promise<FileSystemWritableFileStream>;
+  }
+
+  type FileSystemWriteChunkType = BufferSource | Blob | string;
+
+  interface Window {
+    showOpenFilePicker?: (options?: OpenFilePickerOptions) => Promise<FileSystemFileHandle[]>;
+    showSaveFilePicker?: (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle>;
+    electronApp?: {
+      getAutosaveDocument: () => Promise<string | null>;
+      saveAutosaveDocument: (content: string) => Promise<void>;
+      clearAutosaveDocument: () => Promise<void>;
+      openDocumentFromPath: () => Promise<{
+        filePath: string;
+        fileName: string;
+        rawText: string;
+        bytes: number[];
+      } | null>;
+      openDocumentAtPath: (options: {
+        filePath: string;
+      }) => Promise<{
+        filePath: string;
+        fileName: string;
+        rawText: string;
+        bytes: number[];
+      } | null>;
+      renameDocumentAtPath: (options: {
+        filePath: string;
+        baseName: string;
+      }) => Promise<string>;
+      saveDocumentToPath: (options: {
+        content: string;
+        defaultFileName: string;
+        filePath?: string | null;
+        forcePrompt?: boolean;
+      }) => Promise<string | null>;
+      listWorkspaceEntries: () => Promise<{
+        rootPath: string;
+        entries: WorkspaceEntry[];
+      }>;
+      pickAndImportAttachment: (options: {
+        documentPath: string;
+      }) => Promise<{
+        name: string;
+        mimeType: string;
+        relativePath: string;
+        sizeBytes: number;
+        fileUrl: string;
+      } | null>;
+      resolveAttachmentUrl: (options: {
+        documentPath: string;
+        relativePath: string;
+      }) => Promise<string | null>;
+    };
+  }
+}

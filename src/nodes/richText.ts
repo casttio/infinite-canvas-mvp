@@ -23,6 +23,15 @@ const createEmptyParagraph = (): RichTextParagraph => ({
 });
 
 const EMPTY_PARAGRAPH_BLOCK_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
+const HEADING_FONT_SIZES: Record<string, string> = {
+  h1: "32px",
+  h2: "28px",
+  h3: "24px",
+  h4: "20px",
+  h5: "18px",
+  h6: "16px",
+};
+const LIST_BULLETS = ["•", "◦", "▪"];
 
 export const wrapTableCellContentHtml = (innerHtml = EMPTY_PARAGRAPH_BLOCK_HTML) =>
   `<div class="text-block-table-cell-content">${innerHtml}</div>`;
@@ -66,6 +75,7 @@ const normalizeHighlightColor = (value: string | null | undefined) => {
 const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type: "text" }>) => {
   const styleEntries = [
     inline.fontFamily ? `font-family: ${escapeAttribute(inline.fontFamily)};` : "",
+    inline.fontSize ? `font-size: ${escapeAttribute(inline.fontSize)};` : "",
     inline.color ? `color: ${escapeAttribute(inline.color)};` : "",
     inline.highlightColor ? `background-color: ${escapeAttribute(inline.highlightColor)};` : "",
   ].filter(Boolean);
@@ -76,6 +86,7 @@ const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type
 
   const attributes = [
     inline.fontFamily ? `data-font-family="${escapeAttribute(inline.fontFamily)}"` : "",
+    inline.fontSize ? `data-font-size="${escapeAttribute(inline.fontSize)}"` : "",
     inline.color ? `data-text-color="${escapeAttribute(inline.color)}"` : "",
     inline.highlightColor ? `data-highlight-color="${escapeAttribute(inline.highlightColor)}"` : "",
     `style="${styleEntries.join(" ")}"`,
@@ -97,7 +108,7 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}) => {
       inline.w ? `style="width: ${inline.w}px;"` : "",
     ].filter(Boolean).join(" ");
 
-    if (!asset) {
+    if (!asset || asset.type !== "image" || !asset.data) {
       return `<span class="text-inline-image-missing" data-asset-id="${escapeAttribute(inline.assetId)}" ${sizeAttributes}>图片资源缺失</span>`;
     }
 
@@ -177,6 +188,12 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic"> = []) =
     if ((tagName === "em" || tagName === "i") && !nextMarks.includes("italic")) {
       nextMarks.push("italic");
     }
+    if (tagName in HEADING_FONT_SIZES && !nextMarks.includes("bold")) {
+      nextMarks.push("bold");
+    }
+    if (tagName === "blockquote" && !nextMarks.includes("italic")) {
+      nextMarks.push("italic");
+    }
     current = current.parentElement;
   }
 
@@ -186,6 +203,7 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic"> = []) =
 const readInlineStyle = (element: Node | null) => {
   let current = element;
   let fontFamily: string | undefined;
+  let fontSize: string | undefined;
   let color: string | undefined;
   let highlightColor: string | undefined;
 
@@ -196,6 +214,22 @@ const readInlineStyle = (element: Node | null) => {
         ?? current.style.fontFamily
         ?? current.getAttribute("face"),
       );
+      if (!fontFamily) {
+        const tagName = current.tagName.toLowerCase();
+        if (tagName === "code" || tagName === "pre") {
+          fontFamily = "monospace";
+        }
+      }
+    }
+
+    if (!fontSize) {
+      fontSize = normalizeInlineStyleValue(
+        current.dataset.fontSize
+        ?? current.style.fontSize,
+      );
+      if (!fontSize) {
+        fontSize = HEADING_FONT_SIZES[current.tagName.toLowerCase()];
+      }
     }
 
     if (!color) {
@@ -204,6 +238,9 @@ const readInlineStyle = (element: Node | null) => {
         ?? current.style.color
         ?? current.getAttribute("color"),
       );
+      if (!color && current.tagName.toLowerCase() === "blockquote") {
+        color = "#475569";
+      }
     }
 
     if (!highlightColor) {
@@ -226,6 +263,7 @@ const readInlineStyle = (element: Node | null) => {
 
   return {
     ...(fontFamily ? { fontFamily } : {}),
+    ...(fontSize ? { fontSize } : {}),
     ...(color ? { color } : {}),
     ...(highlightColor ? { highlightColor } : {}),
   };
@@ -302,7 +340,10 @@ const paragraphFromNodes = (nodes: Node[]) => {
 };
 
 const isBlockElement = (node: Node): node is HTMLElement =>
-  node instanceof HTMLElement && ["p", "div", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6"].includes(node.tagName.toLowerCase());
+  node instanceof HTMLElement && ["p", "div", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "pre"].includes(node.tagName.toLowerCase());
+
+const isListElement = (node: Node): node is HTMLElement =>
+  node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase());
 
 const isTableWrapperElement = (node: Node): node is HTMLDivElement =>
   node instanceof HTMLDivElement && node.classList.contains("text-block-table-wrap");
@@ -376,6 +417,62 @@ const readTableWidth = (element: HTMLElement) => {
   return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : undefined;
 };
 
+const paragraphFromPreElement = (element: HTMLElement): RichTextParagraph => {
+  const text = (element.textContent ?? "").replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  const lines = text.split("\n");
+  const content: RichTextInline[] = [];
+
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      content.push({ type: "break" });
+    }
+
+    if (line.length > 0) {
+      content.push({
+        type: "text",
+        text: line,
+        fontFamily: "monospace",
+      });
+    }
+  });
+
+  return {
+    type: "paragraph",
+    content: ensureParagraphContent(content),
+  };
+};
+
+const parseListElement = (list: HTMLElement, depth = 0): RichTextBlock[] => {
+  const isOrdered = list.tagName.toLowerCase() === "ol";
+  const startValue = Number.parseInt(list.getAttribute("start") ?? "1", 10);
+  const start = Number.isFinite(startValue) ? startValue : 1;
+  const items = Array.from(list.children).filter((child): child is HTMLLIElement => child instanceof HTMLLIElement);
+  const blocks: RichTextBlock[] = [];
+
+  items.forEach((item, index) => {
+    const nestedLists = Array.from(item.children).filter((child): child is HTMLElement =>
+      child instanceof HTMLElement && ["ul", "ol"].includes(child.tagName.toLowerCase()),
+    );
+    const contentNodes = Array.from(item.childNodes).filter((node) => (
+      !(node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase()))
+    ));
+    const paragraph = paragraphFromNodes(contentNodes);
+    const prefix = isOrdered ? `${start + index}. ` : `${LIST_BULLETS[depth % LIST_BULLETS.length]} `;
+
+    paragraph.content = [
+      { type: "text", text: prefix },
+      ...paragraph.content,
+    ];
+    blocks.push(paragraph);
+
+    nestedLists.forEach((nestedList) => {
+      blocks.push(...parseListElement(nestedList, depth + 1));
+    });
+  });
+
+  return blocks.length > 0 ? blocks : [createEmptyParagraph()];
+};
+
 const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
   const blocks: RichTextBlock[] = [];
   let inlineBuffer: Node[] = [];
@@ -403,6 +500,12 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
       return;
     }
 
+    if (isListElement(node)) {
+      flushInlineBuffer();
+      blocks.push(...parseListElement(node));
+      return;
+    }
+
     if (node instanceof HTMLTableElement) {
       flushInlineBuffer();
       blocks.push(tableFromElement(node));
@@ -411,6 +514,10 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
 
     if (isBlockElement(node)) {
       flushInlineBuffer();
+      if (node.tagName.toLowerCase() === "pre") {
+        blocks.push(paragraphFromPreElement(node));
+        return;
+      }
       blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
       return;
     }

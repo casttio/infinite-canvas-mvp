@@ -1,5 +1,6 @@
 import type {
   CanvasNode,
+  DocumentAppearance,
   DocumentFile,
   ImageNode,
   PageBounds,
@@ -36,6 +37,21 @@ export const createDefaultPageBounds = (): PageBounds => ({
   y: 0,
   w: 1600,
   h: 1200,
+});
+
+export const createDefaultDocumentAppearance = (): DocumentAppearance => ({
+  pageBackground: "#ffffff",
+  grid: {
+    enabled: false,
+    color: "rgba(15, 23, 42, 0.08)",
+    size: 24,
+  },
+  pages: {
+    count: 1,
+    height: 1200,
+    gap: 72,
+    titles: [],
+  },
 });
 
 export const derivePageBoundsFromNodes = (
@@ -93,12 +109,14 @@ export const createEmptyDocument = (): DocumentFile => {
       cameraY: 0,
       zoom: 1,
     },
+    appearance: createDefaultDocumentAppearance(),
   };
 };
 
 export const createTextNode = (x: number, y: number): TextNode => ({
   id: createNodeId("text"),
   type: "text",
+  pageIndex: 0,
   x,
   y,
   w: 320,
@@ -119,6 +137,7 @@ export const createImageNode = (
 ): ImageNode => ({
   id: createNodeId("image"),
   type: "image",
+  pageIndex: 0,
   x,
   y,
   w: width,

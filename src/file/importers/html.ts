@@ -1,31 +1,50 @@
-import { createDefaultPageBounds, createDocumentId, createNodeId } from "../../model/defaults";
-import type { DocumentFile, RichTextDoc } from "../../model/types";
+import { createAssetId, createDefaultDocumentAppearance, createDefaultPageBounds, createDocumentId, createImageNode } from "../../model/defaults";
+import type { DocumentFile } from "../../model/types";
 
 const nowIso = () => new Date().toISOString();
 
-const normalizeWhitespace = (value: string) => value.replace(/\s+/g, " ").trim();
-
-const htmlToRichTextDoc = (rawHtml: string): RichTextDoc => {
+const createPreviewHtml = (rawHtml: string) => {
   const parser = new DOMParser();
-  const html = parser.parseFromString(rawHtml, "text/html");
-  const blocks = Array.from(html.body.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, blockquote, pre"));
-
-  const paragraphs = (blocks.length > 0 ? blocks : [html.body]).map((element) => {
-    const text = normalizeWhitespace(element.textContent ?? "");
-    return {
-      type: "paragraph" as const,
-      content: text.length > 0 ? [{ type: "text" as const, text }] : [{ type: "break" as const }],
-    };
-  });
+  const parsed = parser.parseFromString(rawHtml, "text/html");
+  const title = parsed.title.trim();
+  const headInnerHtml = parsed.head.innerHTML;
+  const bodyInnerHtml = parsed.body.innerHTML;
 
   return {
-    type: "doc",
-    content: paragraphs,
+    title,
+    html: `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    ${headInnerHtml}
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: white;
+      }
+    </style>
+  </head>
+  <body>
+    ${bodyInnerHtml}
+  </body>
+</html>`,
   };
 };
 
 export const importHtmlDocument = (rawHtml: string, fileName = "import.html"): DocumentFile => {
   const timestamp = nowIso();
+  const preview = createPreviewHtml(rawHtml);
+  const assetId = createAssetId();
+  const previewWidth = 960;
+  const previewHeight = 720;
+  const previewNode = {
+    ...createImageNode(48, 48, assetId, previewWidth, previewHeight),
+    style: {
+      kind: "html-preview",
+    },
+  };
 
   return {
     format: "icanvas",
@@ -34,32 +53,28 @@ export const importHtmlDocument = (rawHtml: string, fileName = "import.html"): D
       id: createDocumentId(),
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(preview.title ? { title: preview.title } : {}),
       source: {
         kind: "html",
         fileName,
       },
     },
-    nodes: [
-      {
-        id: createNodeId("text"),
-        type: "text",
-        x: 48,
-        y: 48,
-        w: 640,
-        h: 360,
-        z: 1,
-        content: htmlToRichTextDoc(rawHtml),
-        style: {
-          fontSize: 16,
-        },
+    nodes: [previewNode],
+    assets: {
+      [assetId]: {
+        id: assetId,
+        type: "html",
+        mimeType: "text/html",
+        name: preview.title || fileName,
+        data: preview.html,
       },
-    ],
-    assets: {},
+    },
     pageBounds: createDefaultPageBounds(),
     viewState: {
       cameraX: 0,
       cameraY: 0,
       zoom: 1,
     },
+    appearance: createDefaultDocumentAppearance(),
   };
 };

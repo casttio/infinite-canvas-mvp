@@ -37,12 +37,14 @@ export interface TextEditorCommand {
     | "insert-image"
     | "append-text"
     | "set-font-family"
+    | "set-font-size"
     | "set-text-color"
     | "set-highlight-color";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
   fontFamily?: string;
+  fontSize?: string;
   color?: string;
   assetId?: string;
   name?: string;
@@ -222,6 +224,15 @@ export const TextNode = ({
     return editor.contains(selection.anchorNode) && editor.contains(selection.focusNode);
   };
 
+  const isRangeInsideEditor = (range: Range | null) => {
+    const editor = editorRef.current;
+    if (!editor || !range) {
+      return false;
+    }
+
+    return editor.contains(range.startContainer) && editor.contains(range.endContainer);
+  };
+
   const saveCurrentSelectionRange = () => {
     const selection = window.getSelection();
     if (!isSelectionInsideEditor(selection)) {
@@ -235,14 +246,74 @@ export const TextNode = ({
   const restoreSavedSelectionRange = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
-    if (!editor || !selection || !savedSelectionRangeRef.current) {
+    const savedRange = savedSelectionRangeRef.current;
+    if (!editor || !selection || !savedRange || !isRangeInsideEditor(savedRange)) {
       return false;
     }
 
-    editor.focus();
+    try {
+      editor.focus();
+      selection.removeAllRanges();
+      selection.addRange(savedRange.cloneRange());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const hasCollapsedEditorSelection = () => {
+    const selection = window.getSelection();
+    return isSelectionInsideEditor(selection) ? selection!.isCollapsed : false;
+  };
+
+  const applyInlineStyleAtCaret = (styles: Partial<CSSStyleDeclaration>) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0 || !isSelectionInsideEditor(selection)) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) {
+      return false;
+    }
+
+    const marker = document.createElement("span");
+    marker.dataset.inlineStyleCaret = "true";
+    Object.assign(marker.style, styles);
+
+    const textNode = document.createTextNode("\u200b");
+    marker.appendChild(textNode);
+
+    range.insertNode(marker);
+
+    const markerRange = document.createRange();
+    markerRange.setStart(textNode, 0);
+    markerRange.setEnd(textNode, textNode.textContent?.length ?? 1);
     selection.removeAllRanges();
-    selection.addRange(savedSelectionRangeRef.current.cloneRange());
+    selection.addRange(markerRange);
+    savedSelectionRangeRef.current = markerRange.cloneRange();
     return true;
+  };
+
+  const getInlineStylesForCommand = (nextCommand: TextEditorCommand): Partial<CSSStyleDeclaration> | null => {
+    if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
+      return { fontFamily: nextCommand.fontFamily };
+    }
+
+    if (nextCommand.type === "set-font-size" && typeof nextCommand.fontSize === "string") {
+      return { fontSize: nextCommand.fontSize };
+    }
+
+    if (nextCommand.type === "set-text-color" && typeof nextCommand.color === "string") {
+      return { color: nextCommand.color };
+    }
+
+    if (nextCommand.type === "set-highlight-color" && typeof nextCommand.color === "string") {
+      return { backgroundColor: nextCommand.color };
+    }
+
+    return null;
   };
 
   const syncDimensionsToContent = (options?: { expandTables?: boolean }) => {
@@ -721,8 +792,13 @@ export const TextNode = ({
       return false;
     }
 
-    if (!restoreSavedSelectionRange() && !saveCurrentSelectionRange()) {
-      return false;
+    if (!restoreSavedSelectionRange()) {
+      if (!saveCurrentSelectionRange()) {
+        editorRef.current.focus();
+      }
+      if (!restoreSavedSelectionRange()) {
+        return false;
+      }
     }
 
     const selection = window.getSelection();
@@ -730,10 +806,42 @@ export const TextNode = ({
       return false;
     }
 
+    if (hasCollapsedEditorSelection()) {
+      const collapsedStyles = getInlineStylesForCommand(nextCommand);
+      if (collapsedStyles && applyInlineStyleAtCaret(collapsedStyles)) {
+        draftHtmlRef.current = editorRef.current.innerHTML;
+        syncDimensionsToContent();
+        onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+        saveCurrentSelectionRange();
+        editorRef.current.focus();
+        return true;
+      }
+    }
+
     document.execCommand("styleWithCSS", false, "true");
 
     if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
       document.execCommand("fontName", false, nextCommand.fontFamily);
+    }
+
+    if (nextCommand.type === "set-font-size" && typeof nextCommand.fontSize === "string") {
+      document.execCommand("fontSize", false, "7");
+      const selection = window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const fontElements = editorRef.current.querySelectorAll("font[size='7']");
+      fontElements.forEach((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+
+        if (range && !range.intersectsNode(element)) {
+          return;
+        }
+
+        element.removeAttribute("size");
+        element.style.fontSize = nextCommand.fontSize!;
+        element.dataset.fontSize = nextCommand.fontSize!;
+      });
     }
 
     if (nextCommand.type === "set-text-color" && typeof nextCommand.color === "string") {
@@ -2178,7 +2286,12 @@ export const TextNode = ({
       return;
     }
 
-    if (command.type === "set-font-family" || command.type === "set-text-color" || command.type === "set-highlight-color") {
+    if (
+      command.type === "set-font-family"
+      || command.type === "set-font-size"
+      || command.type === "set-text-color"
+      || command.type === "set-highlight-color"
+    ) {
       applyInlineFormatCommand(command);
     }
   }, [command, editing]);
@@ -2375,9 +2488,14 @@ export const TextNode = ({
         onCopy={handleCopy}
         onCut={handleCut}
         onPaste={handlePaste}
-        onBlur={() => {
+        onBlur={(event) => {
+          saveCurrentSelectionRange();
           if (pendingSelectionRef.current || suppressBlurCommitRef.current) {
             restoreEditorFocus();
+            return;
+          }
+          const relatedTarget = event.relatedTarget;
+          if (relatedTarget instanceof HTMLElement && relatedTarget.closest("[data-preserve-editor-focus='true']")) {
             return;
           }
           syncDimensionsToContent();

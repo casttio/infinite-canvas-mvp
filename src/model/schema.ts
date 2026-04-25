@@ -15,6 +15,7 @@ const richTextInlineSchema = z.discriminatedUnion("type", [
     text: z.string(),
     marks: z.array(z.enum(["bold", "italic"])).optional(),
     fontFamily: z.string().min(1).optional(),
+    fontSize: z.string().min(1).optional(),
     color: z.string().min(1).optional(),
     highlightColor: z.string().min(1).optional(),
   }).catchall(z.unknown()),
@@ -68,6 +69,7 @@ const richTextDocSchema = z.object({
 
 const baseNodeSchema = z.object({
   id: z.string(),
+  pageIndex: z.number().int().nonnegative().optional(),
   x: z.number(),
   y: z.number(),
   w: z.number().positive(),
@@ -88,10 +90,13 @@ const imageNodeSchema = baseNodeSchema.extend({
 
 const assetSchema = z.object({
   id: z.string(),
-  type: z.literal("image"),
+  type: z.enum(["image", "html", "pdf", "file"]),
+  storage: z.enum(["embedded", "managed"]).optional(),
   mimeType: z.string(),
   name: z.string(),
-  data: z.string().startsWith("data:"),
+  data: z.string().min(1).optional(),
+  relativePath: z.string().min(1).optional(),
+  sizeBytes: z.number().nonnegative().optional(),
 }).catchall(z.unknown());
 
 export const documentFileSchema = z.object({
@@ -114,6 +119,20 @@ export const documentFileSchema = z.object({
     cameraX: z.number(),
     cameraY: z.number(),
     zoom: z.number().positive(),
+  }).catchall(z.unknown()),
+  appearance: z.object({
+    pageBackground: z.string().min(1),
+    grid: z.object({
+      enabled: z.boolean(),
+      color: z.string().min(1),
+      size: z.number().positive(),
+    }).catchall(z.unknown()),
+    pages: z.object({
+      count: z.number().int().positive(),
+      height: z.number().positive(),
+      gap: z.number().nonnegative(),
+      titles: z.array(z.string()).optional(),
+    }).catchall(z.unknown()),
   }).catchall(z.unknown()),
 }).catchall(z.unknown());
 
