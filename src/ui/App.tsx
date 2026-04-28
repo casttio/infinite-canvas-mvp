@@ -485,7 +485,6 @@ export const App = () => {
   const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>("files");
   const [graphSidebarWidth, setGraphSidebarWidth] = useState(readStoredGraphSidebarWidth);
   const [graphSidebarResizing, setGraphSidebarResizing] = useState(false);
-  const [showFileMenu, setShowFileMenu] = useState(false);
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
@@ -594,33 +593,6 @@ export const App = () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [sidebarContextMenu]);
-
-  useEffect(() => {
-    if (!showFileMenu) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".topbar-file-menu-anchor")) {
-        return;
-      }
-      setShowFileMenu(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setShowFileMenu(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown, true);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown, true);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [showFileMenu]);
 
   useEffect(() => {
     setStoredPageIndex(documentFile.meta.id, activePageIndex, currentSavePath);
@@ -1489,6 +1461,29 @@ export const App = () => {
   const handleCancelWorkspaceFileRename = () => {
     setRenamingFilePath(null);
     setRenamingFileName("");
+  };
+
+  const handleMoveWorkspaceFileToDirectory = async (filePath: string, targetDirectoryPath: string) => {
+    if (!window.electronApp?.moveDocumentToDirectory) {
+      window.alert("移动文件需要在桌面版中使用。");
+      return;
+    }
+
+    try {
+      const nextPath = await window.electronApp.moveDocumentToDirectory({
+        filePath,
+        targetDirectoryPath,
+      });
+
+      if (currentSavePath === filePath) {
+        setCurrentSavePath(nextPath);
+      }
+
+      setExpandedDirectories((current) => Array.from(new Set([...current, targetDirectoryPath])));
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "移动文件失败。");
+    }
   };
 
   const handleBeginRenamePage = (pageIndex: number) => {
@@ -2432,33 +2427,20 @@ export const App = () => {
   return (
     <div className="app-shell">
       <div className="topbar-shell">
-        <div className="topbar-actions-row">
-          <button type="button" className="toolbar-button toolbar-icon-button" disabled={historyPastRef.current.length === 0} onClick={handleUndo} aria-label="撤销">↶</button>
-          <button type="button" className="toolbar-button toolbar-icon-button" disabled={historyFutureRef.current.length === 0} onClick={handleRedo} aria-label="重做">↷</button>
-          <div className="toolbar-popover-anchor topbar-file-menu-anchor">
-            <button
-              type="button"
-              className={showFileMenu ? "toolbar-button toolbar-file-button active" : "toolbar-button toolbar-file-button"}
-              onClick={() => setShowFileMenu((current) => !current)}
-            >
-              文件
-            </button>
-            {showFileMenu ? (
-              <div className="toolbar-file-menu">
-                <button type="button" className="toolbar-file-menu-item" onClick={handleNewDocument}>新建</button>
-                <button type="button" className="toolbar-file-menu-item" onClick={handleOpenClick}>打开</button>
-                <button type="button" className="toolbar-file-menu-item primary" onClick={handleSave}>保存</button>
-                <button type="button" className="toolbar-file-menu-item" onClick={handleSaveAs}>另存为</button>
-              </div>
-            ) : null}
-          </div>
-        </div>
         <Toolbar
           zoom={documentFile.viewState.zoom}
           dirty={isDirty}
+          canUndo={historyPastRef.current.length > 0}
+          canRedo={historyFutureRef.current.length > 0}
           canInsertTable={editingNodeId !== null || !!selectedTextNode}
           canInsertTableColumn={editingNodeId !== null}
           canFormatText={editingNodeId !== null || hasSelectedTextNodes}
+          onNewDocument={handleNewDocument}
+          onOpenDocument={handleOpenClick}
+          onSaveDocument={handleSave}
+          onSaveAsDocument={handleSaveAs}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
           onAddText={handleAddText}
           onAddImage={handleImageClick}
           onAddAttachment={handleAttachmentClick}
@@ -2660,6 +2642,7 @@ export const App = () => {
               errorMessage={workspaceError}
               onToggleDirectory={handleToggleDirectory}
               onOpenFile={handleOpenWorkspaceFile}
+              onMoveFileToDirectory={handleMoveWorkspaceFileToDirectory}
               onFileContextMenu={handleFileContextMenu}
               renamingFilePath={renamingFilePath}
               renamingFileName={renamingFileName}

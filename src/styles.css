@@ -369,6 +369,24 @@ button:disabled {
   border-color: transparent;
 }
 
+.file-tree-row.file {
+  cursor: grab;
+}
+
+.file-tree-row.file:active {
+  cursor: grabbing;
+}
+
+.file-tree-row.file.dragging {
+  opacity: 0.48;
+}
+
+.file-tree-row.directory.drop-target {
+  background: #ecfdf5;
+  border-color: rgba(16, 185, 129, 0.36);
+  color: #047857;
+}
+
 .file-tree-row.file.active {
   background: #dbeafe;
   color: #1d4ed8;
@@ -469,6 +487,10 @@ button:disabled {
   background: #2563eb;
 }
 
+.folder-dot {
+  background: #10b981;
+}
+
 .page-dot {
   background: #cbd5e1;
 }
@@ -563,15 +585,56 @@ button:disabled {
   position: relative;
   z-index: 20;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.6rem 1rem;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+  padding: 0.35rem 0.75rem 0.6rem;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(15, 23, 42, 0.06);
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.toolbar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.toolbar-tab {
+  height: 34px;
+  min-width: 64px;
+  padding: 0 0.85rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #1e293b;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.toolbar-tab:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: transparent;
+}
+
+.toolbar-tab.active {
+  color: #6b21a8;
+  box-shadow: inset 0 -3px 0 #7e22ce;
+}
+
+.toolbar-subrow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .toolbar-group,
@@ -583,6 +646,7 @@ button:disabled {
 
 .toolbar-group {
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .toolbar-swatches {
@@ -611,6 +675,11 @@ button:disabled {
 
 .toolbar-button:hover:not(:disabled) {
   background: #f8fafc;
+}
+
+.toolbar-button.primary {
+  color: #1d4ed8;
+  font-weight: 700;
 }
 
 .toolbar-file-button.active,
@@ -665,7 +734,8 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  padding-left: 0.25rem;
+  padding-left: 0.15rem;
+  min-width: 0;
 }
 
 .text-format-select {
@@ -1709,13 +1779,22 @@ button:disabled {
     flex-wrap: wrap;
   }
 
-  .toolbar {
-    flex-wrap: wrap;
+  .toolbar-tabs {
+    overflow-x: auto;
+  }
+
+  .toolbar-subrow {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toolbar-group,
   .toolbar-meta {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+  }
+
+  .text-format-toolbar {
+    flex-wrap: wrap;
   }
 }

@@ -84,6 +84,10 @@ declare global {
         filePath: string;
         baseName: string;
       }) => Promise<string>;
+      moveDocumentToDirectory: (options: {
+        filePath: string;
+        targetDirectoryPath: string;
+      }) => Promise<string>;
       saveDocumentToPath: (options: {
         content: string;
         defaultFileName: string;

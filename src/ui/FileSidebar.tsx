@@ -1,7 +1,8 @@
 import cytoscape from "cytoscape";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChangeEvent as ReactChangeEvent,
+  DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   RefObject,
@@ -16,6 +17,7 @@ interface FileSidebarProps {
   errorMessage: string | null;
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onMoveFileToDirectory: (filePath: string, directoryPath: string) => void;
   onFileContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, path: string, currentName: string) => void;
   renamingFilePath: string | null;
   renamingFileName: string;
@@ -26,9 +28,14 @@ interface FileSidebarProps {
 }
 
 const FILE_SUFFIXES = [".icanvas.html", ".icanvas.json", ".onetoc2", ".html", ".htm", ".json", ".txt", ".md", ".xml", ".one"];
+const GRAPH_MIN_ZOOM = 0.6;
+const GRAPH_MAX_ZOOM = 1.6;
 
 const getDepth = (relativePath: string) =>
-  relativePath.length === 0 ? 0 : relativePath.split("/").length - 1;
+  relativePath.length === 0 ? 0 : relativePath.split(/[\\/]/).length - 1;
+
+const getRelativePathSegments = (relativePath: string) =>
+  relativePath.split(/[\\/]/).filter(Boolean);
 
 const getEditableBaseName = (fileName: string) => {
   const lowerName = fileName.toLowerCase();
@@ -88,6 +95,57 @@ const useWorkspaceGraph = (
       return;
     }
 
+    const sortedDocumentSummaries = [...documentSummaries]
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath, "zh-CN"));
+    const depthGapX = 128;
+    const fileGapY = 82;
+    const pageGapX = 76;
+    const pageGapY = 24;
+    const graphCenterY = 0;
+    const directoryMap = new Map<string, {
+      label: string;
+      path: string;
+      parentPath: string | null;
+      depth: number;
+      yTotal: number;
+      childCount: number;
+    }>();
+    const filePositions = new Map<string, { x: number; y: number }>();
+
+    sortedDocumentSummaries.forEach((summary, fileIndex) => {
+      const fileY = sortedDocumentSummaries.length <= 1
+        ? graphCenterY
+        : fileIndex * fileGapY - ((sortedDocumentSummaries.length - 1) * fileGapY) / 2;
+      const segments = getRelativePathSegments(summary.relativePath || summary.fileName);
+      const directorySegments = segments.slice(0, -1);
+
+      directorySegments.forEach((segment, directoryIndex) => {
+        const directoryPath = directorySegments.slice(0, directoryIndex + 1).join("/");
+        const parentPath = directoryIndex === 0 ? null : directorySegments.slice(0, directoryIndex).join("/");
+        const current = directoryMap.get(directoryPath);
+
+        if (current) {
+          current.yTotal += fileY;
+          current.childCount += 1;
+          return;
+        }
+
+        directoryMap.set(directoryPath, {
+          label: segment,
+          path: directoryPath,
+          parentPath,
+          depth: directoryIndex,
+          yTotal: fileY,
+          childCount: 1,
+        });
+      });
+
+      filePositions.set(summary.filePath, {
+        x: (directorySegments.length + 1) * depthGapX,
+        y: fileY,
+      });
+    });
+
     const rootNode = {
       data: {
         id: "workspace-root",
@@ -96,20 +154,22 @@ const useWorkspaceGraph = (
       },
       position: {
         x: 0,
-        y: 0,
+        y: graphCenterY,
       },
     };
-    const fileRadius = 120;
-    const pageRadius = 64;
-    const pageAngleStep = 0.28;
-    const getFileAngle = (fileIndex: number) => {
-      if (documentSummaries.length <= 1) {
-        return -Math.PI / 2;
-      }
-
-      return -Math.PI / 2 + (fileIndex / documentSummaries.length) * Math.PI * 2;
-    };
-    const fileNodes = documentSummaries.map((summary, fileIndex) => ({
+    const directoryNodes = Array.from(directoryMap.values()).map((directory) => ({
+      data: {
+        id: `directory:${directory.path}`,
+        label: directory.label,
+        kind: "directory",
+        directoryPath: directory.path,
+      },
+      position: {
+        x: (directory.depth + 1) * depthGapX,
+        y: directory.yTotal / directory.childCount,
+      },
+    }));
+    const fileNodes = sortedDocumentSummaries.map((summary) => ({
       data: {
         id: `file:${summary.filePath}`,
         label: summary.fileName,
@@ -118,15 +178,10 @@ const useWorkspaceGraph = (
         isCurrentFile: summary.filePath === currentFilePathRef.current ? "true" : "false",
         current: summary.filePath === currentFilePathRef.current ? "true" : "false",
       },
-      position: {
-        x: Math.cos(getFileAngle(fileIndex)) * fileRadius,
-        y: Math.sin(getFileAngle(fileIndex)) * fileRadius,
-      },
+      position: filePositions.get(summary.filePath) ?? { x: depthGapX, y: graphCenterY },
     }));
-    const pageNodes = documentSummaries.flatMap((summary, fileIndex) => {
-      const fileAngle = getFileAngle(fileIndex);
-      const fileX = Math.cos(fileAngle) * fileRadius;
-      const fileY = Math.sin(fileAngle) * fileRadius;
+    const pageNodes = sortedDocumentSummaries.flatMap((summary) => {
+      const filePosition = filePositions.get(summary.filePath) ?? { x: depthGapX, y: graphCenterY };
       const pageCount = Math.max(summary.pages.length, 1);
       return summary.pages.map((page) => ({
         data: {
@@ -140,20 +195,33 @@ const useWorkspaceGraph = (
           current: summary.filePath === currentFilePathRef.current && page.index === currentPageIndexRef.current ? "true" : "false",
         },
         position: {
-          x: fileX + Math.cos(fileAngle + (page.index - (pageCount - 1) / 2) * pageAngleStep) * pageRadius,
-          y: fileY + Math.sin(fileAngle + (page.index - (pageCount - 1) / 2) * pageAngleStep) * pageRadius,
+          x: filePosition.x + pageGapX,
+          y: filePosition.y + (page.index - (pageCount - 1) / 2) * pageGapY,
         },
       }));
     });
-    const fileEdges = documentSummaries.map((summary) => ({
+    const directoryEdges = Array.from(directoryMap.values()).map((directory) => ({
       data: {
-        id: `edge:workspace:${summary.filePath}`,
-        source: "workspace-root",
-        target: `file:${summary.filePath}`,
-        kind: "workspace-file",
+        id: `edge:directory:${directory.path}`,
+        source: directory.parentPath ? `directory:${directory.parentPath}` : "workspace-root",
+        target: `directory:${directory.path}`,
+        kind: "workspace-directory",
       },
     }));
-    const pageEdges = documentSummaries.flatMap((summary) =>
+    const fileEdges = sortedDocumentSummaries.map((summary) => {
+      const segments = getRelativePathSegments(summary.relativePath || summary.fileName);
+      const parentDirectoryPath = segments.slice(0, -1).join("/");
+
+      return {
+        data: {
+          id: `edge:file:${summary.filePath}`,
+          source: parentDirectoryPath ? `directory:${parentDirectoryPath}` : "workspace-root",
+          target: `file:${summary.filePath}`,
+          kind: parentDirectoryPath ? "directory-file" : "workspace-file",
+        },
+      };
+    });
+    const pageEdges = sortedDocumentSummaries.flatMap((summary) =>
       summary.pages.map((page) => ({
         data: {
           id: `edge:${summary.filePath}:${page.index}`,
@@ -164,11 +232,11 @@ const useWorkspaceGraph = (
       })));
     const cy = cytoscape({
       container: containerRef.current,
-      elements: [rootNode, ...fileNodes, ...pageNodes, ...fileEdges, ...pageEdges],
+      elements: [rootNode, ...directoryNodes, ...fileNodes, ...pageNodes, ...directoryEdges, ...fileEdges, ...pageEdges],
       layout: { name: "preset", fit: true, padding: 16 },
-      minZoom: 0.6,
-      maxZoom: 1.6,
-      wheelSensitivity: 0.18,
+      minZoom: GRAPH_MIN_ZOOM,
+      maxZoom: GRAPH_MAX_ZOOM,
+      userZoomingEnabled: false,
       style: [
         {
           selector: "node",
@@ -207,6 +275,29 @@ const useWorkspaceGraph = (
             width: 34,
             height: 34,
             "border-color": "#bfdbfe",
+          },
+        },
+        {
+          selector: 'node[kind = "directory"]',
+          style: {
+            width: 22,
+            height: 16,
+            shape: "round-rectangle",
+            "background-color": "#10b981",
+            "border-width": 2,
+            "border-color": "#d1fae5",
+            color: "#065f46",
+            "font-weight": 700,
+          },
+        },
+        {
+          selector: 'node[kind = "directory"].hovered',
+          style: {
+            width: 30,
+            height: 22,
+            "background-color": "#059669",
+            "border-color": "#a7f3d0",
+            "border-width": 3,
           },
         },
         {
@@ -301,6 +392,13 @@ const useWorkspaceGraph = (
             "line-color": "#93c5fd",
           },
         },
+        {
+          selector: 'edge[kind = "workspace-directory"], edge[kind = "directory-file"]',
+          style: {
+            width: 2,
+            "line-color": "#86efac",
+          },
+        },
       ],
     });
 
@@ -341,6 +439,36 @@ const useWorkspaceGraph = (
     cy.on("tap", "node", (event) => openGraphNode(event.target));
     cyRef.current = cy;
 
+    const handleGraphWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) {
+        return;
+      }
+
+      const delta = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? event.deltaY * 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? event.deltaY * containerRect.height
+          : event.deltaY;
+      const intensity = Math.min(Math.abs(delta) / 120, 4);
+      const dynamicSensitivity = 0.0018 * (1 + intensity * 0.65);
+      const nextZoom = Math.max(
+        GRAPH_MIN_ZOOM,
+        Math.min(GRAPH_MAX_ZOOM, cy.zoom() * Math.exp(-delta * dynamicSensitivity)),
+      );
+
+      cy.zoom({
+        level: nextZoom,
+        renderedPosition: {
+          x: event.clientX - containerRect.left,
+          y: event.clientY - containerRect.top,
+        },
+      });
+    };
+
+    containerRef.current.addEventListener("wheel", handleGraphWheel, { passive: false });
+
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(() => {
@@ -351,6 +479,7 @@ const useWorkspaceGraph = (
 
     return () => {
       resizeObserver?.disconnect();
+      containerRef.current?.removeEventListener("wheel", handleGraphWheel);
       cyRef.current = null;
       cy.destroy();
     };
@@ -366,6 +495,7 @@ export const FileSidebar = ({
   errorMessage,
   onToggleDirectory,
   onOpenFile,
+  onMoveFileToDirectory,
   onFileContextMenu,
   renamingFilePath,
   renamingFileName,
@@ -375,6 +505,35 @@ export const FileSidebar = ({
   onRefresh,
 }: FileSidebarProps) => {
   const expandedSet = useMemo(() => new Set(expandedDirectories), [expandedDirectories]);
+  const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
+  const [dropTargetDirectoryPath, setDropTargetDirectoryPath] = useState<string | null>(null);
+
+  const getDraggedFilePath = (event: ReactDragEvent<HTMLElement>) =>
+    event.dataTransfer.getData("application/x-icanvas-file-path") || draggingFilePath;
+
+  const handleDirectoryDragOver = (event: ReactDragEvent<HTMLButtonElement>, directoryPath: string) => {
+    const filePath = getDraggedFilePath(event);
+    if (!filePath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetDirectoryPath(directoryPath);
+  };
+
+  const handleDirectoryDrop = (event: ReactDragEvent<HTMLButtonElement>, directoryPath: string) => {
+    const filePath = getDraggedFilePath(event);
+    if (!filePath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingFilePath(null);
+    setDropTargetDirectoryPath(null);
+    onMoveFileToDirectory(filePath, directoryPath);
+  };
 
   const renderEntries = (items: WorkspaceEntry[]) =>
     items.map((entry) => {
@@ -382,14 +541,28 @@ export const FileSidebar = ({
 
       if (entry.type === "directory") {
         const expanded = expandedSet.has(entry.path);
+        const dropTarget = dropTargetDirectoryPath === entry.path;
 
         return (
           <div key={entry.path} className="file-tree-item">
             <button
               type="button"
-              className={expanded ? "file-tree-row directory expanded" : "file-tree-row directory"}
+              className={[
+                "file-tree-row",
+                "directory",
+                expanded ? "expanded" : "",
+                dropTarget ? "drop-target" : "",
+              ].filter(Boolean).join(" ")}
               style={{ paddingLeft: `${0.65 + depth * 0.9}rem` }}
               onClick={() => onToggleDirectory(entry.path)}
+              onDragOver={(event) => handleDirectoryDragOver(event, entry.path)}
+              onDragEnter={(event) => handleDirectoryDragOver(event, entry.path)}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDropTargetDirectoryPath((current) => (current === entry.path ? null : current));
+                }
+              }}
+              onDrop={(event) => handleDirectoryDrop(event, entry.path)}
             >
               <span className="file-tree-caret">{expanded ? "▾" : "▸"}</span>
               <span className="file-tree-name">{entry.name}</span>
@@ -434,8 +607,24 @@ export const FileSidebar = ({
         <button
           key={entry.path}
           type="button"
-          className={active ? "file-tree-row file active" : "file-tree-row file"}
+          className={[
+            "file-tree-row",
+            "file",
+            active ? "active" : "",
+            draggingFilePath === entry.path ? "dragging" : "",
+          ].filter(Boolean).join(" ")}
           style={{ paddingLeft: `${1.8 + depth * 0.9}rem` }}
+          draggable
+          onDragStart={(event) => {
+            setDraggingFilePath(entry.path);
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("application/x-icanvas-file-path", entry.path);
+            event.dataTransfer.setData("text/plain", entry.name);
+          }}
+          onDragEnd={() => {
+            setDraggingFilePath(null);
+            setDropTargetDirectoryPath(null);
+          }}
           onClick={() => onOpenFile(entry.path)}
           onContextMenu={(event) => onFileContextMenu(event, entry.path, getEditableBaseName(entry.name))}
         >
@@ -499,6 +688,7 @@ export const WorkspaceGraphPanel = ({
         <>
           <div ref={graphRef} className="workspace-graph" />
           <div className="workspace-graph-legend">
+            <span><i className="legend-dot folder-dot" />文件夹</span>
             <span><i className="legend-dot file-dot" />文件</span>
             <span><i className="legend-dot page-dot" />页面</span>
             <span><i className="legend-dot active-dot" />当前页</span>

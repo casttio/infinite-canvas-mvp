@@ -36,6 +36,11 @@ const getDialogStartPath = async (filePath) => {
 const isSupportedDocumentPath = (filePath) =>
   SUPPORTED_DOCUMENT_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 
+const isPathInside = (parentPath, candidatePath) => {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return relativePath === "" || (!!relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+};
+
 const getDocumentSuffix = (fileName) => {
   const lowerName = fileName.toLowerCase();
   const matchedSuffix = DOCUMENT_SUFFIXES.find((suffix) => lowerName.endsWith(suffix));
@@ -506,6 +511,53 @@ app.whenReady().then(() => {
 
     const targetPath = path.join(path.dirname(filePath), `${nextBaseName}${suffix}`);
     await fs.rename(filePath, targetPath);
+    return targetPath;
+  });
+
+  ipcMain.handle("document:move-to-directory", async (_event, options = {}) => {
+    const filePath = typeof options.filePath === "string" ? options.filePath : "";
+    const targetDirectoryPath = typeof options.targetDirectoryPath === "string" ? options.targetDirectoryPath : "";
+
+    if (!filePath || !targetDirectoryPath) {
+      throw new Error("文件路径或目标文件夹无效。");
+    }
+
+    const rootPath = path.resolve(await ensureDefaultWorkspaceDir());
+    const resolvedFilePath = path.resolve(filePath);
+    const resolvedTargetDirectoryPath = path.resolve(targetDirectoryPath);
+
+    if (!isPathInside(rootPath, resolvedFilePath) || !isPathInside(rootPath, resolvedTargetDirectoryPath)) {
+      throw new Error("只能移动工作目录内的文件。");
+    }
+
+    if (!isSupportedDocumentPath(resolvedFilePath)) {
+      throw new Error("只能移动支持的文档文件。");
+    }
+
+    const [fileStats, targetDirectoryStats] = await Promise.all([
+      fs.stat(resolvedFilePath),
+      fs.stat(resolvedTargetDirectoryPath),
+    ]);
+
+    if (!fileStats.isFile() || !targetDirectoryStats.isDirectory()) {
+      throw new Error("文件路径或目标文件夹无效。");
+    }
+
+    if (path.dirname(resolvedFilePath) === resolvedTargetDirectoryPath) {
+      return resolvedFilePath;
+    }
+
+    const targetPath = path.join(resolvedTargetDirectoryPath, path.basename(resolvedFilePath));
+    try {
+      await fs.access(targetPath);
+      throw new Error("目标文件夹已存在同名文件。");
+    } catch (error) {
+      if (!error || typeof error !== "object" || error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    await fs.rename(resolvedFilePath, targetPath);
     return targetPath;
   });
 
