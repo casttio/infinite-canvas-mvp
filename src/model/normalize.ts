@@ -104,9 +104,9 @@ const normalizeTable = (table: RichTextTable, tableDepth: number): RichTextTable
   };
 };
 
-export const normalizeBlock = (block: RichTextBlock): RichTextBlock => {
+export const normalizeBlock = (block: RichTextBlock, tableDepth = 0): RichTextBlock => {
   if (block.type === "table") {
-    return normalizeTable(block, 0);
+    return normalizeTable(block, tableDepth);
   }
 
   return normalizeParagraph(block);
@@ -114,7 +114,7 @@ export const normalizeBlock = (block: RichTextBlock): RichTextBlock => {
 
 export const normalizeBlocks = (blocks: RichTextBlock[], tableDepth = 0): RichTextBlock[] =>
   blocks.length > 0
-    ? blocks.map((block) => (block.type === "table" ? normalizeTable(block, tableDepth) : normalizeParagraph(block)))
+    ? blocks.map((block) => normalizeBlock(block, tableDepth))
     : [emptyParagraph()];
 
 export const normalizeRichTextDoc = (doc: RichTextDoc): RichTextDoc => ({

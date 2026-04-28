@@ -13,7 +13,7 @@ const richTextInlineSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
     text: z.string(),
-    marks: z.array(z.enum(["bold", "italic"])).optional(),
+    marks: z.array(z.enum(["bold", "italic", "underline", "strike"])).optional(),
     fontFamily: z.string().min(1).optional(),
     fontSize: z.string().min(1).optional(),
     color: z.string().min(1).optional(),

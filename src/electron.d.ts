@@ -1,6 +1,20 @@
 export {};
 
 declare global {
+  interface WorkspacePageSummary {
+    index: number;
+    title: string;
+  }
+
+  interface WorkspaceDocumentSummary {
+    filePath: string;
+    fileName: string;
+    relativePath: string;
+    pageCount: number;
+    pages: WorkspacePageSummary[];
+    updatedAt?: string;
+  }
+
   interface WorkspaceFileEntry {
     type: "file";
     name: string;
@@ -79,6 +93,10 @@ declare global {
       listWorkspaceEntries: () => Promise<{
         rootPath: string;
         entries: WorkspaceEntry[];
+      }>;
+      listWorkspaceDocumentSummaries: () => Promise<{
+        rootPath: string;
+        documents: WorkspaceDocumentSummary[];
       }>;
       pickAndImportAttachment: (options: {
         documentPath: string;

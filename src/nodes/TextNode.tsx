@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   ClipboardEvent as ReactClipboardEvent,
+  MouseEvent as ReactMouseEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
@@ -39,7 +41,11 @@ export interface TextEditorCommand {
     | "set-font-family"
     | "set-font-size"
     | "set-text-color"
-    | "set-highlight-color";
+    | "set-highlight-color"
+    | "toggle-bold"
+    | "toggle-italic"
+    | "toggle-underline"
+    | "toggle-strike";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
@@ -97,11 +103,29 @@ type EditorSelectionState =
     };
 
 type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation" | "altKey">;
+type TableContextMenuState = {
+  x: number;
+  y: number;
+  measured: boolean;
+  tableKey: string;
+  rowIndex: number;
+  columnIndex: number;
+  rowCount: number;
+  columnCount: number;
+};
+type TextContextMenuState = {
+  x: number;
+  y: number;
+  measured: boolean;
+};
 
 const COLUMN_RESIZE_HIT_SLOP = 14;
 const TABLE_RESIZE_HIT_SLOP = 18;
-const NODE_RESIZE_HIT_SLOP = 14;
+const NODE_RESIZE_HIT_SLOP = 22;
 const TABLE_SELECTION_DRAG_THRESHOLD = 6;
+const CONTEXT_MENU_VIEWPORT_PADDING = 8;
+const TABLE_MIN_COLUMN_WIDTH = 72;
+const NESTED_TABLE_MIN_COLUMN_WIDTH = 48;
 const EMPTY_PARAGRAPH_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
 
 export const TextNode = ({
@@ -127,7 +151,10 @@ export const TextNode = ({
   const pendingCaretPointRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredColumnCellRef = useRef<HTMLTableCellElement | null>(null);
   const hoveredTableWrapRef = useRef<HTMLElement | null>(null);
+  const hoveredNodeResizeHandleRef = useRef<ResizeHandle | null>(null);
   const activeTableCellRef = useRef<HTMLTableCellElement | null>(null);
+  const tableContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const textContextMenuRef = useRef<HTMLDivElement | null>(null);
   const suppressBlurCommitRef = useRef(false);
   const customClipboardRef = useRef<{ text: string; html: string } | null>(null);
   const pendingSelectionRef = useRef<{
@@ -148,6 +175,18 @@ export const TextNode = ({
     column: number | null;
   } | null>(null);
   const [editorSelection, setEditorSelection] = useState<EditorSelectionState>({ type: "none" });
+  const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
+  const [textContextMenu, setTextContextMenu] = useState<TextContextMenuState | null>(null);
+
+  const getDeclaredElementWidth = (element: HTMLElement) => {
+    const dataWidth = Number(element.getAttribute("data-w"));
+    if (Number.isFinite(dataWidth) && dataWidth > 0) {
+      return dataWidth;
+    }
+
+    const styleWidth = Number.parseFloat(element.style.width);
+    return Number.isFinite(styleWidth) && styleWidth > 0 ? styleWidth : 0;
+  };
 
   const placeCaretFromPoint = () => {
     if (!editorRef.current) {
@@ -206,6 +245,37 @@ export const TextNode = ({
       }, 0);
     const measuredHeight = Math.max(180, Math.ceil(contentBottom + paddingBottom));
     onAutoResize(measuredHeight);
+  };
+
+  const measureEditorContentWidth = () => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return 320;
+    }
+
+    const editorStyle = window.getComputedStyle(editor);
+    const paddingLeft = Number.parseFloat(editorStyle.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(editorStyle.paddingRight) || 0;
+    const contentRight = Array.from(editor.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement)
+      .reduce((right, child) => {
+        const childStyle = window.getComputedStyle(child);
+        const marginRight = Number.parseFloat(childStyle.marginRight) || 0;
+        const childWidth = Math.max(child.offsetWidth, getDeclaredElementWidth(child));
+        return Math.max(right, child.offsetLeft + childWidth + marginRight);
+      }, 0);
+
+    return Math.max(320, Math.ceil(Math.max(editor.scrollWidth, contentRight + paddingRight, paddingLeft + paddingRight)));
+  };
+
+  const applyImmediateNodeWidth = (width: number) => {
+    const editor = editorRef.current;
+    const nodeElement = editor?.closest(".text-node");
+    if (!(nodeElement instanceof HTMLElement) || !Number.isFinite(width) || width <= 0) {
+      return;
+    }
+
+    nodeElement.style.width = `${Math.ceil(width)}px`;
   };
 
   const restoreEditorFocus = () => {
@@ -324,7 +394,8 @@ export const TextNode = ({
     if (options?.expandTables) {
       expandTablesToFitContent();
     }
-    const measuredWidth = Math.max(320, Math.ceil(editorRef.current.scrollWidth));
+    const measuredWidth = measureEditorContentWidth();
+    applyImmediateNodeWidth(measuredWidth);
     onAutoResizeWidth(measuredWidth);
     syncHeightToContent();
   };
@@ -353,26 +424,131 @@ export const TextNode = ({
     return table instanceof HTMLTableElement ? table : null;
   };
 
-  const getMeasuredTableColumnWidths = (table: HTMLTableElement) => {
+  const isNestedTableWrapper = (wrapper: HTMLElement) => !!wrapper.closest("td");
+
+  const getTableBaseColumnWidth = (wrapper: HTMLElement) =>
+    isNestedTableWrapper(wrapper) ? NESTED_TABLE_MIN_COLUMN_WIDTH : TABLE_MIN_COLUMN_WIDTH;
+
+  const getHorizontalPadding = (element: HTMLElement) => {
+    const style = window.getComputedStyle(element);
+    return (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0);
+  };
+
+  const getElementPixelWidth = (element: HTMLElement) => {
+    const declaredWidth = getDeclaredElementWidth(element);
+    if (declaredWidth > 0) {
+      return declaredWidth;
+    }
+
+    const rectWidth = element.getBoundingClientRect().width;
+    if (Number.isFinite(rectWidth) && rectWidth > 0) {
+      return rectWidth;
+    }
+
+    return element.offsetWidth;
+  };
+
+  const getTopLevelEditorBlock = (element: HTMLElement) => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return null;
+    }
+
+    let current: HTMLElement | null = element;
+    while (current && current.parentElement !== editor) {
+      current = current.parentElement;
+    }
+
+    return current?.parentElement === editor ? current : null;
+  };
+
+  const syncDimensionsToTableWrapper = (wrapper: HTMLElement) => {
+    const editor = editorRef.current;
+    const topBlock = getTopLevelEditorBlock(wrapper);
+    if (!editor || !topBlock) {
+      syncDimensionsToContent();
+      return;
+    }
+
+    const editorStyle = window.getComputedStyle(editor);
+    const paddingRight = Number.parseFloat(editorStyle.paddingRight) || 0;
+    const topBlockStyle = window.getComputedStyle(topBlock);
+    const marginRight = Number.parseFloat(topBlockStyle.marginRight) || 0;
+    const tableDrivenWidth = topBlock.offsetLeft + getElementPixelWidth(topBlock) + marginRight + paddingRight;
+    const measuredWidth = Math.max(measureEditorContentWidth(), Math.ceil(tableDrivenWidth));
+
+    applyImmediateNodeWidth(measuredWidth);
+    onAutoResizeWidth(measuredWidth);
+    syncHeightToContent();
+  };
+
+  const getMeasuredTableColumnWidths = (wrapper: HTMLElement, table: HTMLTableElement) => {
     const firstRow = table.rows.item(0);
     if (!firstRow) {
       return [];
     }
 
     return Array.from(firstRow.cells).map((cell) =>
-      Math.max(72, Math.round(cell.getBoundingClientRect().width || cell.offsetWidth || 120)),
+      Math.max(getTableBaseColumnWidth(wrapper), Math.round(cell.getBoundingClientRect().width || cell.offsetWidth || 120)),
     );
   };
 
-  const normalizeTableColumnWidths = (table: HTMLTableElement, widths: number[]) => {
+  const getCellNestedTableWidthRequirement = (cell: HTMLTableCellElement) => {
+    const nestedWidths = Array.from(cell.querySelectorAll(".text-block-table-wrap"))
+      .filter((element): element is HTMLElement => element instanceof HTMLElement)
+      .map((element) => getElementPixelWidth(element))
+      .filter((width) => Number.isFinite(width) && width > 0);
+
+    if (nestedWidths.length === 0) {
+      return 0;
+    }
+
+    return Math.ceil(Math.max(...nestedWidths) + getHorizontalPadding(cell));
+  };
+
+  const getTableColumnMinimumWidths = (wrapper: HTMLElement, table: HTMLTableElement) => {
     const columnCount = table.rows.item(0)?.cells.length ?? 0;
     if (columnCount === 0) {
       return [];
     }
 
-    const fallbackWidths = getMeasuredTableColumnWidths(table);
+    const minimumWidths: number[] = Array.from({ length: columnCount }, () => getTableBaseColumnWidth(wrapper));
+    Array.from(table.rows).forEach((row) => {
+      Array.from(row.cells).forEach((cell) => {
+        if (!(cell instanceof HTMLTableCellElement)) {
+          return;
+        }
+
+        const columnIndex = cell.cellIndex;
+        minimumWidths[columnIndex] = Math.max(
+          minimumWidths[columnIndex] ?? getTableBaseColumnWidth(wrapper),
+          getCellNestedTableWidthRequirement(cell),
+        );
+      });
+    });
+
+    return minimumWidths;
+  };
+
+  const getTableMinimumWidth = (wrapper: HTMLElement) => {
+    const table = getTableElement(wrapper);
+    if (!table) {
+      return isNestedTableWrapper(wrapper) ? 96 : 180;
+    }
+
+    return getTableColumnMinimumWidths(wrapper, table).reduce((sum, width) => sum + width, 0);
+  };
+
+  const normalizeTableColumnWidths = (wrapper: HTMLElement, table: HTMLTableElement, widths: number[]) => {
+    const columnCount = table.rows.item(0)?.cells.length ?? 0;
+    if (columnCount === 0) {
+      return [];
+    }
+
+    const fallbackWidths = getMeasuredTableColumnWidths(wrapper, table);
+    const minimumWidths = getTableColumnMinimumWidths(wrapper, table);
     return Array.from({ length: columnCount }, (_, index) =>
-      Math.max(72, Math.round(widths[index] ?? fallbackWidths[index] ?? 120)),
+      Math.max(minimumWidths[index] ?? getTableBaseColumnWidth(wrapper), Math.round(widths[index] ?? fallbackWidths[index] ?? 120)),
     );
   };
 
@@ -384,19 +560,69 @@ export const TextNode = ({
 
     const explicitWidths = readTableColumnWidths(wrapper, table);
     if (explicitWidths.length > 0) {
-      return normalizeTableColumnWidths(table, explicitWidths);
+      return normalizeTableColumnWidths(wrapper, table, explicitWidths);
     }
 
-    return getMeasuredTableColumnWidths(table);
+    return getMeasuredTableColumnWidths(wrapper, table);
   };
 
-  const applyTableColumnWidths = (wrapper: HTMLElement, widths: number[]) => {
+  const expandAncestorColumnsForNestedTable = (wrapper: HTMLElement, childWidth = getElementPixelWidth(wrapper)) => {
+    let currentWrapper: HTMLElement | null = wrapper;
+    let requiredNestedWidth = childWidth;
+    let containingCell = currentWrapper.closest("td");
+
+    while (containingCell instanceof HTMLTableCellElement) {
+      const parentWrapper = containingCell.closest(".text-block-table-wrap");
+      if (!(parentWrapper instanceof HTMLElement) || parentWrapper === currentWrapper) {
+        break;
+      }
+
+      const parentTable = getTableElement(parentWrapper);
+      if (!parentTable) {
+        break;
+      }
+
+      const columnIndex = containingCell.cellIndex;
+      const currentWidths = getTableColumnWidths(parentWrapper);
+      if (currentWidths.length === 0) {
+        break;
+      }
+
+      const requiredColumnWidth = Math.ceil(requiredNestedWidth + getHorizontalPadding(containingCell));
+      const nextWidths = [...currentWidths];
+      nextWidths[columnIndex] = Math.max(nextWidths[columnIndex] ?? 0, requiredColumnWidth);
+      const nextTotalWidth = nextWidths.reduce((sum, width) => sum + width, 0);
+      const currentMaterializedWidth = getElementPixelWidth(parentWrapper);
+      const hasMaterializedColumnWidths = (parentWrapper.getAttribute("data-col-widths") ?? "").trim().length > 0;
+
+      if (
+        nextWidths.some((width, index) => width > currentWidths[index])
+        || !hasMaterializedColumnWidths
+        || nextTotalWidth > currentMaterializedWidth + 0.5
+      ) {
+        applyTableColumnWidths(parentWrapper, nextWidths, { expandAncestors: false });
+      }
+
+      currentWrapper = parentWrapper;
+      requiredNestedWidth = Math.max(
+        getElementPixelWidth(parentWrapper),
+        nextTotalWidth,
+      );
+      containingCell = currentWrapper.closest("td");
+    }
+  };
+
+  const applyTableColumnWidths = (
+    wrapper: HTMLElement,
+    widths: number[],
+    options: { expandAncestors?: boolean } = {},
+  ) => {
     const table = getTableElement(wrapper);
     if (!table) {
       return;
     }
 
-    const normalizedWidths = normalizeTableColumnWidths(table, widths);
+    const normalizedWidths = normalizeTableColumnWidths(wrapper, table, widths);
     if (normalizedWidths.length === 0) {
       return;
     }
@@ -424,23 +650,10 @@ export const TextNode = ({
     wrapper.style.width = `${totalWidth}px`;
     wrapper.setAttribute("data-w", String(totalWidth));
     wrapper.setAttribute("data-col-widths", normalizedWidths.join(","));
-  };
 
-  const measureCellContentWidth = (cell: HTMLTableCellElement) => {
-    const content = cell.querySelector(":scope > .text-block-table-cell-content");
-    if (!(content instanceof HTMLElement)) {
-      return Math.ceil(cell.scrollWidth);
+    if (options.expandAncestors !== false && isNestedTableWrapper(wrapper)) {
+      expandAncestorColumnsForNestedTable(wrapper, totalWidth);
     }
-
-    const childWidths = Array.from(content.children)
-      .filter((child): child is HTMLElement => child instanceof HTMLElement)
-      .map((child) => Math.max(child.scrollWidth, child.getBoundingClientRect().width));
-
-    if (childWidths.length === 0) {
-      return Math.ceil(content.getBoundingClientRect().width);
-    }
-
-    return Math.ceil(Math.max(...childWidths));
   };
 
   const expandTablesToFitContent = () => {
@@ -451,52 +664,23 @@ export const TextNode = ({
 
     const wrappers = Array.from(editor.querySelectorAll(".text-block-table-wrap"))
       .filter((element): element is HTMLElement => element instanceof HTMLElement)
-      .filter((wrapper) => !wrapper.closest("td"));
-
-    for (let pass = 0; pass < 4; pass += 1) {
-      let changed = false;
-
-      wrappers.forEach((wrapper) => {
-        const table = getTableElement(wrapper);
-        if (!table || table.rows.length === 0) {
-          return;
-        }
-
-        const widths = getTableColumnWidths(wrapper);
-        if (widths.length === 0) {
-          return;
-        }
-
-        const nextWidths = [...widths];
-        Array.from(table.rows).forEach((row) => {
-          Array.from(row.cells).forEach((cell) => {
-            if (!(cell instanceof HTMLTableCellElement)) {
-              return;
-            }
-
-            const contentWidth = measureCellContentWidth(cell);
-            const style = window.getComputedStyle(cell);
-            const paddingX = (Number.parseFloat(style.paddingLeft) || 0)
-              + (Number.parseFloat(style.paddingRight) || 0);
-            const requiredWidth = Math.max(72, contentWidth + paddingX);
-            const columnIndex = cell.cellIndex;
-
-            if (requiredWidth > nextWidths[columnIndex]) {
-              nextWidths[columnIndex] = requiredWidth;
-            }
-          });
-        });
-
-        if (nextWidths.some((width, index) => width > widths[index])) {
-          applyTableColumnWidths(wrapper, nextWidths);
-          changed = true;
-        }
+      .sort((left, right) => {
+        const leftDepth = Number(left.dataset.tableDepth ?? (isNestedTableWrapper(left) ? 1 : 0));
+        const rightDepth = Number(right.dataset.tableDepth ?? (isNestedTableWrapper(right) ? 1 : 0));
+        return rightDepth - leftDepth;
       });
 
-      if (!changed) {
-        break;
+    wrappers.forEach((wrapper) => {
+      const table = getTableElement(wrapper);
+      if (!table || table.rows.length === 0) {
+        return;
       }
-    }
+
+      const widths = getTableColumnWidths(wrapper);
+      if (widths.length > 0) {
+        applyTableColumnWidths(wrapper, widths);
+      }
+    });
   };
 
   const startInlineImageResize = (event: ReactPointerEvent<HTMLDivElement>, handle: HTMLElement) => {
@@ -544,15 +728,22 @@ export const TextNode = ({
     const startColumnWidths = getTableColumnWidths(wrapper);
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
-      const nextWidth = Math.max(180, startWidth + (moveEvent.clientX - startX) / screenScale);
+      const nextWidth = Math.max(getTableMinimumWidth(wrapper), startWidth + (moveEvent.clientX - startX) / screenScale);
       if (startColumnWidths.length > 0) {
         const nextWidths = [...startColumnWidths];
-        nextWidths[nextWidths.length - 1] = Math.max(72, startColumnWidths[startColumnWidths.length - 1] + (nextWidth - startWidth));
+        nextWidths[nextWidths.length - 1] = Math.max(
+          getTableBaseColumnWidth(wrapper),
+          startColumnWidths[startColumnWidths.length - 1] + (nextWidth - startWidth),
+        );
         applyTableColumnWidths(wrapper, nextWidths);
       } else {
         wrapper.style.width = `${nextWidth}px`;
         wrapper.setAttribute("data-w", String(Math.round(nextWidth)));
+        if (isNestedTableWrapper(wrapper)) {
+          expandAncestorColumnsForNestedTable(wrapper, nextWidth);
+        }
       }
+      syncDimensionsToTableWrapper(wrapper);
     };
 
     const handlePointerUp = () => {
@@ -590,8 +781,9 @@ export const TextNode = ({
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const nextWidths = [...startWidths];
-      nextWidths[columnIndex] = Math.max(72, startWidth + (moveEvent.clientX - startX) / screenScale);
+      nextWidths[columnIndex] = Math.max(getTableBaseColumnWidth(wrapper), startWidth + (moveEvent.clientX - startX) / screenScale);
       applyTableColumnWidths(wrapper, nextWidths);
+      syncDimensionsToTableWrapper(wrapper);
     };
 
     const handlePointerUp = () => {
@@ -609,6 +801,7 @@ export const TextNode = ({
     cell: HTMLTableCellElement,
   ) => {
     const rect = cell.getBoundingClientRect();
+
     if (Math.abs(rect.right - event.clientX) <= COLUMN_RESIZE_HIT_SLOP) {
       return cell;
     }
@@ -699,6 +892,17 @@ export const TextNode = ({
     hoveredTableWrapRef.current?.classList.remove("table-resize-hover");
     hoveredTableWrapRef.current = wrapper;
     hoveredTableWrapRef.current?.classList.add("table-resize-hover");
+  };
+
+  const setNodeResizeHover = (handle: ResizeHandle | null) => {
+    if (hoveredNodeResizeHandleRef.current === handle) {
+      return;
+    }
+
+    hoveredNodeResizeHandleRef.current = handle;
+    if (editorRef.current) {
+      editorRef.current.style.cursor = handle ? "ew-resize" : "";
+    }
   };
 
   const clearTableCellSelection = () => {
@@ -850,6 +1054,22 @@ export const TextNode = ({
 
     if (nextCommand.type === "set-highlight-color" && typeof nextCommand.color === "string") {
       document.execCommand("hiliteColor", false, nextCommand.color);
+    }
+
+    if (nextCommand.type === "toggle-bold") {
+      document.execCommand("bold");
+    }
+
+    if (nextCommand.type === "toggle-italic") {
+      document.execCommand("italic");
+    }
+
+    if (nextCommand.type === "toggle-underline") {
+      document.execCommand("underline");
+    }
+
+    if (nextCommand.type === "toggle-strike") {
+      document.execCommand("strikeThrough");
     }
 
     draftHtmlRef.current = editorRef.current.innerHTML;
@@ -1445,12 +1665,27 @@ export const TextNode = ({
     const anchorElement = range.commonAncestorContainer instanceof Element
       ? range.commonAncestorContainer
       : range.commonAncestorContainer.parentElement;
-    const currentBlock = anchorElement?.closest("[data-block-kind]");
 
-    if (currentBlock instanceof HTMLElement && editorRef.current.contains(currentBlock)) {
-      currentBlock.after(fragment);
+    // When inside a table cell, insert into the cell-content container (enables nesting)
+    const td = anchorElement instanceof HTMLTableCellElement
+      ? anchorElement
+      : anchorElement?.closest("td");
+
+    if (td instanceof HTMLTableCellElement && editorRef.current.contains(td)) {
+      const cellContent = td.querySelector(":scope > .text-block-table-cell-content") ?? td;
+      const blockInCell = anchorElement?.closest("[data-block-kind]");
+      if (blockInCell instanceof HTMLElement && cellContent.contains(blockInCell)) {
+        blockInCell.after(fragment);
+      } else {
+        cellContent.appendChild(fragment);
+      }
     } else {
-      editorRef.current.appendChild(fragment);
+      const currentBlock = anchorElement?.closest("[data-block-kind]");
+      if (currentBlock instanceof HTMLElement && editorRef.current.contains(currentBlock)) {
+        currentBlock.after(fragment);
+      } else {
+        editorRef.current.appendChild(fragment);
+      }
     }
 
     if (lastElement) {
@@ -1481,7 +1716,7 @@ export const TextNode = ({
     if (targetNode.nodeType === Node.TEXT_NODE) {
       offset = 0;
     } else if (targetNode instanceof HTMLElement && targetNode.tagName.toLowerCase() === "br") {
-      targetNode = container;
+      targetNode = targetNode.parentElement ?? container;
       offset = 0;
     }
 
@@ -1794,6 +2029,182 @@ export const TextNode = ({
 
   const deleteTableColumnAtSelection = () => mutateTableColumnAtSelection("delete");
 
+  const getTableContextCell = (context = tableContextMenu) => {
+    const editor = editorRef.current;
+    if (!editor || !context) {
+      return null;
+    }
+
+    const wrapper = editor.querySelector(`[data-table-key="${context.tableKey}"]`);
+    if (!(wrapper instanceof HTMLElement)) {
+      return null;
+    }
+
+    const table = getTableElement(wrapper);
+    const cell = table?.rows.item(context.rowIndex)?.cells.item(context.columnIndex);
+    return cell instanceof HTMLTableCellElement ? cell : null;
+  };
+
+  const runTableContextAction = (action: (cell: HTMLTableCellElement) => boolean | void) => {
+    const cell = getTableContextCell();
+    if (!cell) {
+      setTableContextMenu(null);
+      return;
+    }
+
+    rememberActiveTableCell(cell);
+    action(cell);
+    setTableContextMenu(null);
+    restoreEditorFocus();
+  };
+
+  const insertTableRowAtCell = (cell: HTMLTableCellElement, placement: "above" | "below") => {
+    const row = cell.closest("tr");
+    if (!(row instanceof HTMLTableRowElement)) {
+      return false;
+    }
+
+    const nextRow = row.cloneNode(false) as HTMLTableRowElement;
+    const columnCount = row.cells.length;
+    for (let index = 0; index < columnCount; index += 1) {
+      const nextCell = document.createElement("td");
+      nextCell.innerHTML = wrapTableCellContentHtml();
+      nextRow.appendChild(nextCell);
+    }
+
+    row.parentElement?.insertBefore(nextRow, placement === "above" ? row : row.nextSibling);
+    const firstParagraph = nextRow.querySelector("td p");
+    if (firstParagraph) {
+      placeCaretInside(firstParagraph);
+    }
+
+    commitDraftFromDom();
+    activeTableCellRef.current = nextRow.cells.item(cell.cellIndex) instanceof HTMLTableCellElement
+      ? nextRow.cells.item(cell.cellIndex) as HTMLTableCellElement
+      : null;
+    editorRef.current?.focus();
+    return true;
+  };
+
+  const deleteTableRowAtCell = (cell: HTMLTableCellElement) => {
+    const row = cell.closest("tr");
+    const table = row?.closest("table");
+    if (!(row instanceof HTMLTableRowElement) || !(table instanceof HTMLTableElement) || table.rows.length <= 1) {
+      return false;
+    }
+
+    const fallbackRow = table.rows.item(Math.max(0, row.rowIndex - 1)) ?? table.rows.item(row.rowIndex + 1);
+    const fallbackCell = fallbackRow?.cells.item(Math.min(cell.cellIndex, Math.max(0, (fallbackRow?.cells.length ?? 1) - 1)));
+    row.remove();
+    const firstParagraph = fallbackCell?.querySelector("p");
+    if (firstParagraph) {
+      placeCaretInside(firstParagraph);
+    }
+
+    commitDraftFromDom();
+    activeTableCellRef.current = fallbackCell instanceof HTMLTableCellElement ? fallbackCell : null;
+    editorRef.current?.focus();
+    return true;
+  };
+
+  const deleteTableAtCell = (cell: HTMLTableCellElement) => {
+    const wrapper = cell.closest(".text-block-table-wrap");
+    if (!(wrapper instanceof HTMLElement)) {
+      return false;
+    }
+
+    const nextFocusTarget = wrapper.nextElementSibling ?? wrapper.previousElementSibling;
+    wrapper.remove();
+    if (nextFocusTarget instanceof HTMLElement) {
+      placeCaretInside(nextFocusTarget);
+    } else if (editorRef.current && editorRef.current.children.length === 0) {
+      editorRef.current.innerHTML = EMPTY_PARAGRAPH_HTML;
+      placeCaretAtEnd();
+    }
+
+    clearTableCellSelection();
+    commitDraftFromDom();
+    editorRef.current?.focus();
+    return true;
+  };
+
+  const clearTableCellAtCell = (cell: HTMLTableCellElement) => {
+    cell.innerHTML = wrapTableCellContentHtml();
+    const firstParagraph = cell.querySelector("p");
+    if (firstParagraph) {
+      placeCaretInside(firstParagraph);
+    }
+
+    commitDraftFromDom();
+    editorRef.current?.focus();
+    return true;
+  };
+
+  const selectTableRangeAtCell = (cell: HTMLTableCellElement, mode: "table" | "row" | "column" | "cell") => {
+    const location = getCellLocation(cell);
+    const table = cell.closest("table");
+    if (!location || !(table instanceof HTMLTableElement)) {
+      return false;
+    }
+
+    const columnCount = table.rows.item(0)?.cells.length ?? cell.parentElement?.children.length ?? 1;
+    setEditorSelection({
+      type: "cell-range",
+      tableKey: location.tableKey,
+      startRow: mode === "table" || mode === "column" ? 0 : location.row,
+      endRow: mode === "table" || mode === "column" ? Math.max(0, table.rows.length - 1) : location.row,
+      startColumn: mode === "table" || mode === "row" ? 0 : location.column,
+      endColumn: mode === "table" || mode === "row" ? Math.max(0, columnCount - 1) : location.column,
+    });
+    return true;
+  };
+
+  const openTableContextMenu = (event: ReactMouseEvent<HTMLDivElement>, cell: HTMLTableCellElement) => {
+    const location = getCellLocation(cell);
+    const row = cell.closest("tr");
+    const table = row?.closest("table");
+    if (!location || !(row instanceof HTMLTableRowElement) || !(table instanceof HTMLTableElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    suppressBlurCommitRef.current = true;
+    rememberActiveTableCell(cell);
+    setSelectionAnchor(location);
+    setTextContextMenu(null);
+    setTableContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      measured: false,
+      tableKey: location.tableKey,
+      rowIndex: row.rowIndex,
+      columnIndex: cell.cellIndex,
+      rowCount: table.rows.length,
+      columnCount: table.rows.item(0)?.cells.length ?? row.cells.length,
+    });
+  };
+
+  const openTextContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressBlurCommitRef.current = true;
+    pendingCaretPointRef.current = { x: event.clientX, y: event.clientY };
+    placeCaretFromPoint();
+    setTableContextMenu(null);
+    setTextContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      measured: false,
+    });
+  };
+
+  const insertTableFromTextContextMenu = () => {
+    insertTableAtCaret();
+    setTextContextMenu(null);
+    restoreEditorFocus();
+  };
+
   const getSelectionTableContext = () => {
     const selection = window.getSelection();
     const anchorNode = selection?.anchorNode;
@@ -2070,6 +2481,114 @@ export const TextNode = ({
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
   }, [editing]);
 
+  useEffect(() => {
+    if (!tableContextMenu) {
+      return;
+    }
+
+    if (!tableContextMenu.measured) {
+      window.requestAnimationFrame(() => {
+        const menu = tableContextMenuRef.current;
+        if (!menu) {
+          return;
+        }
+
+        const rect = menu.getBoundingClientRect();
+        const maxLeft = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerWidth - rect.width - CONTEXT_MENU_VIEWPORT_PADDING);
+        const maxTop = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerHeight - rect.height - CONTEXT_MENU_VIEWPORT_PADDING);
+        const nextX = Math.min(Math.max(CONTEXT_MENU_VIEWPORT_PADDING, tableContextMenu.x), maxLeft);
+        const nextY = Math.min(Math.max(CONTEXT_MENU_VIEWPORT_PADDING, tableContextMenu.y), maxTop);
+
+        setTableContextMenu((current) => current && current.tableKey === tableContextMenu.tableKey
+          ? {
+              ...current,
+              x: nextX,
+              y: nextY,
+              measured: true,
+            }
+          : current);
+      });
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".table-context-menu")) {
+        return;
+      }
+      setTableContextMenu(null);
+      suppressBlurCommitRef.current = false;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTableContextMenu(null);
+        suppressBlurCommitRef.current = false;
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tableContextMenu]);
+
+  useEffect(() => {
+    if (!textContextMenu) {
+      return;
+    }
+
+    if (!textContextMenu.measured) {
+      window.requestAnimationFrame(() => {
+        const menu = textContextMenuRef.current;
+        if (!menu) {
+          return;
+        }
+
+        const rect = menu.getBoundingClientRect();
+        const maxLeft = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerWidth - rect.width - CONTEXT_MENU_VIEWPORT_PADDING);
+        const maxTop = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerHeight - rect.height - CONTEXT_MENU_VIEWPORT_PADDING);
+        const nextX = Math.min(Math.max(CONTEXT_MENU_VIEWPORT_PADDING, textContextMenu.x), maxLeft);
+        const nextY = Math.min(Math.max(CONTEXT_MENU_VIEWPORT_PADDING, textContextMenu.y), maxTop);
+
+        setTextContextMenu((current) => current
+          ? {
+              ...current,
+              x: nextX,
+              y: nextY,
+              measured: true,
+            }
+          : current);
+      });
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".text-context-menu")) {
+        return;
+      }
+      setTextContextMenu(null);
+      suppressBlurCommitRef.current = false;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTextContextMenu(null);
+        suppressBlurCommitRef.current = false;
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [textContextMenu]);
+
   useEffect(() => () => {
     setColumnResizeHover(null);
     setTableResizeHover(null);
@@ -2291,6 +2810,10 @@ export const TextNode = ({
       || command.type === "set-font-size"
       || command.type === "set-text-color"
       || command.type === "set-highlight-color"
+      || command.type === "toggle-bold"
+      || command.type === "toggle-italic"
+      || command.type === "toggle-underline"
+      || command.type === "toggle-strike"
     ) {
       applyInlineFormatCommand(command);
     }
@@ -2470,13 +2993,17 @@ export const TextNode = ({
               ? target.closest("td")
               : null;
           const wrapper = target instanceof HTMLElement ? getTableResizeWrapper(event, target) : null;
+          const resizeCell = cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null;
+          const nodeResizeHandle = !editing && !wrapper && !resizeCell ? getNodeResizeHandle(event) : null;
 
           setTableResizeHover(wrapper instanceof HTMLElement ? wrapper : null);
-          setColumnResizeHover(cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null);
+          setColumnResizeHover(resizeCell);
+          setNodeResizeHover(nodeResizeHandle);
         }}
         onPointerLeave={() => {
           setColumnResizeHover(null);
           setTableResizeHover(null);
+          setNodeResizeHover(null);
         }}
         onInput={(event) => {
           draftHtmlRef.current = event.currentTarget.innerHTML;
@@ -2485,6 +3012,24 @@ export const TextNode = ({
           syncDimensionsToContent();
         }}
         onKeyDown={handleKeyDown}
+        onContextMenu={(event) => {
+          if (!editing) {
+            return;
+          }
+
+          const target = event.target;
+          const cell = target instanceof HTMLTableCellElement
+            ? target
+            : target instanceof HTMLElement
+              ? target.closest("td")
+              : null;
+          if (cell instanceof HTMLTableCellElement) {
+            openTableContextMenu(event, cell);
+            return;
+          }
+
+          openTextContextMenu(event);
+        }}
         onCopy={handleCopy}
         onCut={handleCut}
         onPaste={handlePaste}
@@ -2502,6 +3047,109 @@ export const TextNode = ({
           onCommit(getCurrentRichTextDoc());
         }}
       />
+      {tableContextMenu && typeof document !== "undefined" ? createPortal(
+        <div
+          ref={tableContextMenuRef}
+          className="table-context-menu"
+          data-preserve-editor-focus="true"
+          style={{
+            left: tableContextMenu.x,
+            top: tableContextMenu.y,
+            visibility: tableContextMenu.measured ? "visible" : "hidden",
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button type="button" onClick={() => runTableContextAction((cell) => {
+            placeCaretInside(cell);
+            insertTableAtCaret();
+          })}>
+            插入表格...
+          </button>
+          <div className="table-context-menu-separator" />
+          <button type="button" onClick={() => runTableContextAction((cell) => {
+            activeTableCellRef.current = cell;
+            return insertTableColumnLeftAtSelection();
+          })}>
+            在左侧插入列
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => {
+            activeTableCellRef.current = cell;
+            return insertTableColumnAtSelection();
+          })}>
+            在右侧插入列
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => insertTableRowAtCell(cell, "above"))}>
+            在上方插入行
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => insertTableRowAtCell(cell, "below"))}>
+            在下方插入行
+          </button>
+          <div className="table-context-menu-separator" />
+          <button type="button" className="danger" onClick={() => runTableContextAction((cell) => deleteTableAtCell(cell))}>
+            删除表格
+          </button>
+          <button
+            type="button"
+            className="danger"
+            disabled={tableContextMenu.columnCount <= 1}
+            onClick={() => runTableContextAction((cell) => {
+              activeTableCellRef.current = cell;
+              return deleteTableColumnAtSelection();
+            })}
+          >
+            删除列
+          </button>
+          <button
+            type="button"
+            className="danger"
+            disabled={tableContextMenu.rowCount <= 1}
+            onClick={() => runTableContextAction((cell) => deleteTableRowAtCell(cell))}
+          >
+            删除行
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => clearTableCellAtCell(cell))}>
+            清空单元格
+          </button>
+          <div className="table-context-menu-separator" />
+          <button type="button" onClick={() => runTableContextAction((cell) => selectTableRangeAtCell(cell, "table"))}>
+            选择表格
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => selectTableRangeAtCell(cell, "column"))}>
+            选择列
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => selectTableRangeAtCell(cell, "row"))}>
+            选择行
+          </button>
+          <button type="button" onClick={() => runTableContextAction((cell) => selectTableRangeAtCell(cell, "cell"))}>
+            选择单元格
+          </button>
+        </div>,
+        document.body,
+      ) : null}
+      {textContextMenu && typeof document !== "undefined" ? createPortal(
+        <div
+          ref={textContextMenuRef}
+          className="table-context-menu text-context-menu"
+          data-preserve-editor-focus="true"
+          style={{
+            left: textContextMenu.x,
+            top: textContextMenu.y,
+            visibility: textContextMenu.measured ? "visible" : "hidden",
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button type="button" onClick={insertTableFromTextContextMenu}>
+            插入表格...
+          </button>
+        </div>,
+        document.body,
+      ) : null}
     </div>
   );
 };

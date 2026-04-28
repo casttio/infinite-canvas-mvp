@@ -41,7 +41,7 @@ export interface PageBounds extends UnknownFields {
 export interface RichTextTextLeaf extends UnknownFields {
   type: "text";
   text: string;
-  marks?: Array<"bold" | "italic">;
+  marks?: Array<"bold" | "italic" | "underline" | "strike">;
   fontFamily?: string;
   fontSize?: string;
   color?: string;

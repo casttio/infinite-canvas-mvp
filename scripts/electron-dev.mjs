@@ -1,10 +1,19 @@
 import { spawn } from "node:child_process";
+import { watch } from "node:fs";
 import { request } from "node:http";
+import path from "node:path";
 import process from "node:process";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const electronBinary = require("electron");
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(scriptDir, "..");
+const watchedElectronFiles = [
+  path.join(projectRoot, "electron", "main.cjs"),
+  path.join(projectRoot, "electron", "preload.cjs"),
+];
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const viteCommand = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -14,6 +23,8 @@ const electronEnv = {
 };
 
 let isShuttingDown = false;
+let electronProcess = null;
+let restartTimer = null;
 
 const waitForServer = (url, timeoutMs = 20000) =>
   new Promise((resolve, reject) => {
@@ -55,6 +66,13 @@ const shutdown = (code = 0) => {
   }
 
   isShuttingDown = true;
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  if (electronProcess && !electronProcess.killed) {
+    electronProcess.kill("SIGTERM");
+  }
   viteProcess.kill("SIGTERM");
   process.exit(code);
 };
@@ -80,11 +98,44 @@ const electronArgs =
     ? ["--no-sandbox", "--disable-gpu", "--in-process-gpu", "."]
     : ["."];
 
-const electronProcess = spawn(electronBinary, electronArgs, {
-  stdio: "inherit",
-  env: electronEnv,
-});
+const startElectron = () => {
+  electronProcess = spawn(electronBinary, electronArgs, {
+    stdio: "inherit",
+    env: electronEnv,
+  });
 
-electronProcess.on("exit", (code) => {
-  shutdown(code ?? 0);
-});
+  electronProcess.on("exit", (code, signal) => {
+    const exitedDuringRestart = !isShuttingDown && signal === "SIGTERM";
+    if (exitedDuringRestart) {
+      return;
+    }
+
+    shutdown(code ?? 0);
+  });
+};
+
+const scheduleElectronRestart = () => {
+  if (isShuttingDown) {
+    return;
+  }
+
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+  }
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    if (electronProcess && !electronProcess.killed) {
+      electronProcess.kill("SIGTERM");
+    }
+    startElectron();
+  }, 120);
+};
+
+for (const watchedFile of watchedElectronFiles) {
+  watch(watchedFile, () => {
+    scheduleElectronRestart();
+  });
+}
+
+startElectron();

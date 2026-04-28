@@ -46,6 +46,11 @@ const getDocumentSuffix = (fileName) => {
   return path.extname(fileName);
 };
 
+const getDocumentBaseName = (fileName) => {
+  const suffix = getDocumentSuffix(fileName);
+  return suffix ? fileName.slice(0, Math.max(0, fileName.length - suffix.length)) : fileName;
+};
+
 const readDocumentPayload = async (filePath) => {
   const bytes = await fs.readFile(filePath);
 
@@ -55,6 +60,185 @@ const readDocumentPayload = async (filePath) => {
     rawText: bytes.toString("utf8"),
     bytes: Array.from(bytes),
   };
+};
+
+const getPageCountFromDocumentData = (documentData) => {
+  const explicitCount = Number(documentData?.appearance?.pages?.count);
+  const nodePageCount = Array.isArray(documentData?.nodes)
+    ? documentData.nodes.reduce((maxPageCount, node) => {
+      const pageIndex = Number(node?.pageIndex);
+      return Number.isFinite(pageIndex) ? Math.max(maxPageCount, Math.floor(pageIndex) + 1) : maxPageCount;
+    }, 1)
+    : 1;
+
+  if (Number.isFinite(explicitCount) && explicitCount > 0) {
+    return Math.max(1, Math.floor(explicitCount), nodePageCount);
+  }
+
+  return Math.max(1, nodePageCount);
+};
+
+const getPlainTextFromRichText = (content) => {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const lines = [];
+
+  for (const block of content) {
+    if (block?.type === "paragraph" && Array.isArray(block.content)) {
+      const text = block.content.map((inline) => {
+        if (inline?.type === "text") {
+          return typeof inline.text === "string" ? inline.text : "";
+        }
+        if (inline?.type === "break") {
+          return "\n";
+        }
+        return "";
+      }).join("").trim();
+
+      if (text) {
+        lines.push(text);
+      }
+      continue;
+    }
+
+    if (block?.type === "table" && Array.isArray(block.rows)) {
+      for (const row of block.rows) {
+        if (!Array.isArray(row?.cells)) {
+          continue;
+        }
+        for (const cell of row.cells) {
+          const text = getPlainTextFromRichText(cell?.content);
+          if (text) {
+            lines.push(text);
+          }
+        }
+      }
+    }
+  }
+
+  return lines.join("\n").trim();
+};
+
+const getPagesFromDocumentData = (documentData, fileName) => {
+  const pageCount = getPageCountFromDocumentData(documentData);
+  const explicitTitles = Array.isArray(documentData?.appearance?.pages?.titles)
+    ? documentData.appearance.pages.titles
+    : [];
+  const textNodes = Array.isArray(documentData?.nodes)
+    ? documentData.nodes.filter((node) => node?.type === "text")
+    : [];
+
+  return Array.from({ length: pageCount }, (_, index) => {
+    const explicitTitle = typeof explicitTitles[index] === "string" ? explicitTitles[index].trim() : "";
+    if (explicitTitle) {
+      return { index, title: explicitTitle };
+    }
+
+    const firstTextNode = textNodes
+      .filter((node) => Number(node?.pageIndex) === index)
+      .sort((left, right) => {
+        const byY = Number(left?.y ?? 0) - Number(right?.y ?? 0);
+        if (byY !== 0) {
+          return byY;
+        }
+        const byX = Number(left?.x ?? 0) - Number(right?.x ?? 0);
+        if (byX !== 0) {
+          return byX;
+        }
+        return Number(left?.z ?? 0) - Number(right?.z ?? 0);
+      })[0];
+    const firstLine = firstTextNode
+      ? getPlainTextFromRichText(firstTextNode.content?.content)
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean)
+      : "";
+
+    return {
+      index,
+      title: firstLine || `${getDocumentBaseName(fileName)} · 第 ${index + 1} 页`,
+    };
+  });
+};
+
+const extractEmbeddedDocumentJson = (rawText) => {
+  const match = rawText.match(/<script[^>]*id=(["'])icanvas-document\1[^>]*>([\s\S]*?)<\/script>/i);
+  return match?.[2] ?? null;
+};
+
+const summarizeDocumentFile = async (rootPath, filePath) => {
+  const fileName = path.basename(filePath);
+  const relativePath = path.relative(rootPath, filePath);
+
+  try {
+    const rawText = await fs.readFile(filePath, "utf8");
+    const normalized = rawText.trimStart();
+    const jsonSource = normalized.startsWith("<!doctype html")
+      || normalized.startsWith("<!DOCTYPE html")
+      || normalized.startsWith("<html")
+      ? extractEmbeddedDocumentJson(rawText)
+      : (normalized.startsWith("{") || normalized.startsWith("[") ? rawText : null);
+
+    if (jsonSource) {
+      const parsed = JSON.parse(jsonSource);
+      if (parsed && typeof parsed === "object") {
+        const pages = getPagesFromDocumentData(parsed, fileName);
+        return {
+          filePath,
+          fileName,
+          relativePath,
+          pageCount: pages.length,
+          pages,
+          updatedAt: typeof parsed?.meta?.updatedAt === "string" ? parsed.meta.updatedAt : undefined,
+        };
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to summarize document", filePath, error);
+  }
+
+  return {
+    filePath,
+    fileName,
+    relativePath,
+    pageCount: 1,
+    pages: [{ index: 0, title: getDocumentBaseName(fileName) }],
+  };
+};
+
+const listWorkspaceDocumentSummaries = async (rootPath, currentPath = rootPath) => {
+  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  const visibleEntries = entries
+    .filter((entry) => !entry.name.startsWith("."))
+    .filter((entry) => entry.name !== ATTACHMENTS_DIR_NAME)
+    .sort((left, right) => {
+      if (left.isDirectory() !== right.isDirectory()) {
+        return left.isDirectory() ? -1 : 1;
+      }
+
+      return left.name.localeCompare(right.name, "zh-CN");
+    });
+
+  const documents = [];
+
+  for (const entry of visibleEntries) {
+    const absolutePath = path.join(currentPath, entry.name);
+
+    if (entry.isDirectory()) {
+      documents.push(...await listWorkspaceDocumentSummaries(rootPath, absolutePath));
+      continue;
+    }
+
+    if (!entry.isFile() || !isSupportedDocumentPath(absolutePath)) {
+      continue;
+    }
+
+    documents.push(await summarizeDocumentFile(rootPath, absolutePath));
+  }
+
+  return documents;
 };
 
 const listWorkspaceEntries = async (rootPath, currentPath = rootPath) => {
@@ -331,6 +515,15 @@ app.whenReady().then(() => {
     return {
       rootPath,
       entries: await listWorkspaceEntries(rootPath),
+    };
+  });
+
+  ipcMain.handle("workspace:document-summaries", async () => {
+    const rootPath = await ensureDefaultWorkspaceDir();
+
+    return {
+      rootPath,
+      documents: await listWorkspaceDocumentSummaries(rootPath),
     };
   });
 

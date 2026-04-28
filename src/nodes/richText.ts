@@ -44,7 +44,7 @@ const ensureParagraphContent = (content: RichTextInline[]): RichTextInline[] =>
 const ensureBlocks = (blocks: RichTextBlock[]): RichTextBlock[] =>
   blocks.length > 0 ? blocks : [createEmptyParagraph()];
 
-const wrapMarks = (text: string, marks: Array<"bold" | "italic"> = []) => {
+const wrapMarks = (text: string, marks: Array<"bold" | "italic" | "underline" | "strike"> = []) => {
   return marks.reduce((result, mark) => {
     if (mark === "bold") {
       return `<strong>${result}</strong>`;
@@ -52,6 +52,14 @@ const wrapMarks = (text: string, marks: Array<"bold" | "italic"> = []) => {
 
     if (mark === "italic") {
       return `<em>${result}</em>`;
+    }
+
+    if (mark === "underline") {
+      return `<u>${result}</u>`;
+    }
+
+    if (mark === "strike") {
+      return `<s>${result}</s>`;
     }
 
     return result;
@@ -176,7 +184,7 @@ export const wrapRichTextTableHtml = (tableInnerHtml: string, options?: { width?
 export const richTextDocToHtml = (doc: RichTextDoc, assets: AssetMap = {}) =>
   blocksToHtml(ensureBlocks(doc.content), assets);
 
-const readMarks = (element: Node | null, marks: Array<"bold" | "italic"> = []) => {
+const readMarks = (element: Node | null, marks: Array<"bold" | "italic" | "underline" | "strike"> = []) => {
   let current = element;
   const nextMarks = [...marks];
 
@@ -193,6 +201,19 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic"> = []) =
     }
     if (tagName === "blockquote" && !nextMarks.includes("italic")) {
       nextMarks.push("italic");
+    }
+    if (tagName === "u" && !nextMarks.includes("underline")) {
+      nextMarks.push("underline");
+    }
+    if ((tagName === "s" || tagName === "strike" || tagName === "del") && !nextMarks.includes("strike")) {
+      nextMarks.push("strike");
+    }
+    const textDecoration = current.style.textDecorationLine || current.style.textDecoration;
+    if (textDecoration.includes("underline") && !nextMarks.includes("underline")) {
+      nextMarks.push("underline");
+    }
+    if (textDecoration.includes("line-through") && !nextMarks.includes("strike")) {
+      nextMarks.push("strike");
     }
     current = current.parentElement;
   }
@@ -348,6 +369,9 @@ const isListElement = (node: Node): node is HTMLElement =>
 const isTableWrapperElement = (node: Node): node is HTMLDivElement =>
   node instanceof HTMLDivElement && node.classList.contains("text-block-table-wrap");
 
+const isTableCellContentElement = (node: Node): node is HTMLDivElement =>
+  node instanceof HTMLDivElement && node.classList.contains("text-block-table-cell-content");
+
 const isResizeHandleElement = (node: Node): node is HTMLElement =>
   node instanceof HTMLElement &&
   node.dataset.tableResizeHandle === "true";
@@ -389,7 +413,9 @@ const tableFromElement = (table: HTMLTableElement, width?: number, colWidths?: n
     type: "tableRow" as const,
     cells: Array.from(row.cells).map((cell) => ({
       type: "tableCell" as const,
-      content: parseBlocksFromNodes(Array.from(cell.childNodes)),
+      content: parseBlocksFromNodes(Array.from(
+        cell.querySelector(":scope > .text-block-table-cell-content")?.childNodes ?? cell.childNodes,
+      )),
     })),
   }));
 
@@ -497,6 +523,12 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
       if (table instanceof HTMLTableElement) {
         blocks.push(tableFromElement(table, readTableWidth(node), readTableColumnWidths(node, table)));
       }
+      return;
+    }
+
+    if (isTableCellContentElement(node)) {
+      flushInlineBuffer();
+      blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
       return;
     }
 

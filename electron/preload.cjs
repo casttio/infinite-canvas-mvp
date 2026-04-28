@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("electronApp", {
   renameDocumentAtPath: (options) => ipcRenderer.invoke("document:rename", options),
   saveDocumentToPath: (options) => ipcRenderer.invoke("document:save", options),
   listWorkspaceEntries: () => ipcRenderer.invoke("workspace:list"),
+  listWorkspaceDocumentSummaries: () => ipcRenderer.invoke("workspace:document-summaries"),
   pickAndImportAttachment: (options) => ipcRenderer.invoke("attachment:pick-import", options),
   resolveAttachmentUrl: (options) => ipcRenderer.invoke("attachment:resolve-url", options),
 });

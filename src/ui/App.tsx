@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { openFileWithPicker, setActiveFileHandle } from "../file/fileHandle";
 import { loadDocumentFromFile, loadDocumentFromRaw } from "../file/loadDocument";
@@ -23,11 +23,11 @@ import {
   touchDocument,
 } from "../model/defaults";
 import { addImageNodeToDocument, addNodeToDocument, updateNodeInDocument } from "../model/documentOps";
-import type { CanvasNode, DocumentFile, PageBounds, RichTextDoc, TextNode as TextNodeModel, ViewState } from "../model/types";
+import type { CanvasNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, RichTextInline, TextNode as TextNodeModel, ViewState } from "../model/types";
 import { ImageNode } from "../nodes/ImageNode";
 import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
-import { FileSidebar } from "./FileSidebar";
+import { FileSidebar, WorkspaceGraphPanel } from "./FileSidebar";
 import { Toolbar } from "./Toolbar";
 
 type InteractionState =
@@ -71,6 +71,8 @@ type SidebarContextMenuState =
       pageIndex: number;
     };
 
+type LeftSidebarMode = "files" | "graph";
+
 const fileNameFromMeta = (document: DocumentFile) => `${document.meta.id}.icanvas.html`;
 const CAMERA_OVERSCROLL_LEFT_TOP = 240;
 const CAMERA_OVERSCROLL_RIGHT_BOTTOM = 180;
@@ -78,6 +80,11 @@ const ZOOM_SETTLE_DELAY_MS = 140;
 const AUTOSAVE_STORAGE_KEY = "icanvas.autosave.document";
 const AUTOSAVE_DELAY_MS = 800;
 const PAGE_STATE_STORAGE_KEY = "icanvas.page-state";
+const FILE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.file-sidebar.collapsed";
+const GRAPH_SIDEBAR_WIDTH_STORAGE_KEY = "icanvas.graph-sidebar.width";
+const GRAPH_SIDEBAR_DEFAULT_WIDTH = 360;
+const GRAPH_SIDEBAR_MIN_WIDTH = 280;
+const GRAPH_SIDEBAR_MAX_WIDTH = 760;
 
 const getInsertOffset = (count: number) => {
   const step = 28;
@@ -114,6 +121,51 @@ const clampViewStateToPage = (
     ...viewState,
     cameraX: clampOrAnchorStart(viewState.cameraX, minCameraX, maxCameraX),
     cameraY: clampOrAnchorStart(viewState.cameraY, minCameraY, maxCameraY),
+  };
+};
+
+const getCameraBounds = (
+  viewState: ViewState,
+  pageBounds: PageBounds,
+  viewport: { width: number; height: number },
+) => {
+  const minCameraX = viewport.width - (pageBounds.x + pageBounds.w + CAMERA_OVERSCROLL_RIGHT_BOTTOM) * viewState.zoom;
+  const maxCameraX = (CAMERA_OVERSCROLL_LEFT_TOP - pageBounds.x) * viewState.zoom;
+  const minCameraY = viewport.height - (pageBounds.y + pageBounds.h + CAMERA_OVERSCROLL_RIGHT_BOTTOM) * viewState.zoom;
+  const maxCameraY = (CAMERA_OVERSCROLL_LEFT_TOP - pageBounds.y) * viewState.zoom;
+
+  return {
+    minCameraX,
+    maxCameraX,
+    minCameraY,
+    maxCameraY,
+  };
+};
+
+const getScrollbarMetrics = (
+  camera: number,
+  minCamera: number,
+  maxCamera: number,
+  trackSize: number,
+) => {
+  const scrollRange = Math.max(0, maxCamera - minCamera);
+  const safeTrackSize = Math.max(0, trackSize);
+  if (scrollRange <= 0 || safeTrackSize <= 0) {
+    return {
+      thumbSize: safeTrackSize,
+      thumbOffset: 0,
+      scrollRange,
+    };
+  }
+
+  const thumbSize = Math.max(36, Math.min(safeTrackSize, safeTrackSize * (safeTrackSize / (safeTrackSize + scrollRange))));
+  const thumbTravel = Math.max(0, safeTrackSize - thumbSize);
+  const ratio = clamp((maxCamera - camera) / scrollRange, 0, 1);
+
+  return {
+    thumbSize,
+    thumbOffset: thumbTravel * ratio,
+    scrollRange,
   };
 };
 
@@ -193,6 +245,14 @@ const formatUpdatedAt = (value: string) => {
   }).format(parsed);
 };
 
+const getWorkspaceRelativePath = (filePath: string, rootPath: string | null) => {
+  if (!rootPath || !filePath.startsWith(rootPath)) {
+    return filePath;
+  }
+
+  return filePath.slice(rootPath.length).replace(/^[\\/]+/, "");
+};
+
 const readStoredPageState = () => {
   if (typeof window === "undefined") {
     return {};
@@ -235,6 +295,25 @@ const setStoredPageIndex = (documentId: string, pageIndex: number) => {
   window.localStorage.setItem(PAGE_STATE_STORAGE_KEY, JSON.stringify(nextState));
 };
 
+const readStoredFileSidebarCollapsed = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem(FILE_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+};
+
+const readStoredGraphSidebarWidth = () => {
+  if (typeof window === "undefined") {
+    return GRAPH_SIDEBAR_DEFAULT_WIDTH;
+  }
+
+  const storedWidth = Number(window.localStorage.getItem(GRAPH_SIDEBAR_WIDTH_STORAGE_KEY));
+  return Number.isFinite(storedWidth)
+    ? clamp(storedWidth, GRAPH_SIDEBAR_MIN_WIDTH, GRAPH_SIDEBAR_MAX_WIDTH)
+    : GRAPH_SIDEBAR_DEFAULT_WIDTH;
+};
+
 const readFileAsDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -272,6 +351,83 @@ const plainTextToRichTextDoc = (text: string): RichTextDoc => {
   };
 };
 
+type TextMark = NonNullable<Extract<RichTextInline, { type: "text" }>["marks"]>[number];
+
+const mapRichTextBlocks = (
+  blocks: RichTextBlock[],
+  mapText: (inline: Extract<RichTextInline, { type: "text" }>) => Extract<RichTextInline, { type: "text" }>,
+): RichTextBlock[] =>
+  blocks.map((block) => {
+    if (block.type === "paragraph") {
+      return {
+        ...block,
+        content: block.content.map((inline) => (inline.type === "text" ? mapText(inline) : inline)),
+      };
+    }
+
+    return {
+      ...block,
+      rows: block.rows.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => ({
+          ...cell,
+          content: mapRichTextBlocks(cell.content, mapText),
+        })),
+      })),
+    };
+  });
+
+const mapRichTextDocText = (
+  doc: RichTextDoc,
+  mapText: (inline: Extract<RichTextInline, { type: "text" }>) => Extract<RichTextInline, { type: "text" }>,
+): RichTextDoc => ({
+  ...doc,
+  content: mapRichTextBlocks(doc.content, mapText),
+});
+
+const collectTextLeaves = (blocks: RichTextBlock[]): Array<Extract<RichTextInline, { type: "text" }>> =>
+  blocks.flatMap((block) => {
+    if (block.type === "paragraph") {
+      return block.content.filter((inline): inline is Extract<RichTextInline, { type: "text" }> => inline.type === "text");
+    }
+
+    return block.rows.flatMap((row) => row.cells.flatMap((cell) => collectTextLeaves(cell.content)));
+  });
+
+const setRichTextFontFamily = (doc: RichTextDoc, fontFamily: string) =>
+  mapRichTextDocText(doc, (inline) => ({ ...inline, fontFamily }));
+
+const setRichTextFontSize = (doc: RichTextDoc, fontSize: string) =>
+  mapRichTextDocText(doc, (inline) => ({ ...inline, fontSize }));
+
+const setRichTextColor = (doc: RichTextDoc, color: string) =>
+  mapRichTextDocText(doc, (inline) => ({ ...inline, color }));
+
+const setRichTextHighlightColor = (doc: RichTextDoc, color: string) =>
+  mapRichTextDocText(doc, (inline) => {
+    if (color === "transparent") {
+      const { highlightColor: _highlightColor, ...rest } = inline;
+      return rest;
+    }
+
+    return { ...inline, highlightColor: color };
+  });
+
+const toggleRichTextMark = (doc: RichTextDoc, mark: TextMark) => {
+  const textLeaves = collectTextLeaves(doc.content);
+  const shouldRemove = textLeaves.length > 0 && textLeaves.every((inline) => inline.marks?.includes(mark));
+
+  return mapRichTextDocText(doc, (inline) => {
+    const marks = inline.marks ?? [];
+    return {
+      ...inline,
+      marks: shouldRemove
+        ? marks.filter((current) => current !== mark)
+        : Array.from(new Set([...marks, mark])),
+    };
+  });
+};
+
 export const App = () => {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
@@ -299,6 +455,7 @@ export const App = () => {
     initialDocumentRef.current = createEmptyDocument();
   }
   const [documentFile, setDocumentFile] = useState<DocumentFile>(initialDocumentRef.current);
+  const documentFileRef = useRef<DocumentFile>(initialDocumentRef.current);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [interaction, setInteraction] = useState<InteractionState>({ type: "none" });
@@ -311,8 +468,14 @@ export const App = () => {
   const [currentSavePath, setCurrentSavePath] = useState<string | null>(null);
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>([]);
+  const [workspaceDocumentSummaries, setWorkspaceDocumentSummaries] = useState<WorkspaceDocumentSummary[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(readStoredFileSidebarCollapsed);
+  const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>("files");
+  const [graphSidebarWidth, setGraphSidebarWidth] = useState(readStoredGraphSidebarWidth);
+  const [graphSidebarResizing, setGraphSidebarResizing] = useState(false);
+  const [showFileMenu, setShowFileMenu] = useState(false);
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
@@ -326,18 +489,26 @@ export const App = () => {
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [swipedPageIndex, setSwipedPageIndex] = useState<number | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
+  const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    documentFileRef.current = documentFile;
+  }, [documentFile]);
 
   const selectedTextNode = (
     selectedNodeIds.length === 1
       ? documentFile.nodes.find((node): node is TextNodeModel => node.id === selectedNodeIds[0] && node.type === "text")
       : undefined
   );
+  const hasSelectedTextNodes = selectedNodeIds.some((nodeId) =>
+    documentFile.nodes.some((node) => node.id === nodeId && node.type === "text"),
+  );
   const pageCount = Math.max(documentFile.appearance.pages.count, inferRequiredPageCount(documentFile));
   const visiblePageNodes = documentFile.nodes
     .filter((node) => node.pageIndex === activePageIndex)
     .sort((left, right) => left.z - right.z);
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
-  const pageSummaries = Array.from({ length: pageCount }, (_, index) => {
+  const pageSummaries = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const explicitTitle = documentFile.appearance.pages.titles?.[index]?.trim();
     if (explicitTitle) {
       return explicitTitle;
@@ -351,7 +522,30 @@ export const App = () => {
       : undefined;
 
     return firstLine ?? `空白页 ${index + 1}`;
-  });
+  }), [documentFile.appearance.pages.titles, documentFile.nodes, pageCount]);
+  const currentWorkspaceDocumentSummary = useMemo<WorkspaceDocumentSummary | null>(() => {
+    if (!currentSavePath) {
+      return null;
+    }
+
+    return {
+      filePath: currentSavePath,
+      fileName: currentSavePath.split(/[\\/]/).pop() ?? fileNameFromMeta(documentFile),
+      relativePath: getWorkspaceRelativePath(currentSavePath, workspaceRootPath),
+      pageCount,
+      pages: pageSummaries.map((title, index) => ({ index, title })),
+      updatedAt: documentFile.meta.updatedAt,
+    };
+  }, [currentSavePath, documentFile.meta.updatedAt, pageCount, pageSummaries, workspaceRootPath]);
+  const sidebarDocumentSummaries = useMemo(() => {
+    if (!currentWorkspaceDocumentSummary) {
+      return workspaceDocumentSummaries;
+    }
+
+    const withoutCurrent = workspaceDocumentSummaries.filter((item) => item.filePath !== currentWorkspaceDocumentSummary.filePath);
+    return [...withoutCurrent, currentWorkspaceDocumentSummary]
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath, "zh-CN"));
+  }, [currentWorkspaceDocumentSummary, workspaceDocumentSummaries]);
 
   useEffect(() => {
     refreshWorkspaceEntries().catch(() => {});
@@ -391,8 +585,51 @@ export const App = () => {
   }, [sidebarContextMenu]);
 
   useEffect(() => {
+    if (!showFileMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".topbar-file-menu-anchor")) {
+        return;
+      }
+      setShowFileMenu(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowFileMenu(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showFileMenu]);
+
+  useEffect(() => {
     setStoredPageIndex(documentFile.meta.id, activePageIndex);
   }, [activePageIndex, documentFile.meta.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(FILE_SIDEBAR_COLLAPSED_STORAGE_KEY, fileSidebarCollapsed ? "true" : "false");
+  }, [fileSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(GRAPH_SIDEBAR_WIDTH_STORAGE_KEY, String(graphSidebarWidth));
+  }, [graphSidebarWidth]);
 
   const syncEditorStateToDocument = (nextDocument: DocumentFile) => {
     const nextNodeIds = new Set(nextDocument.nodes.map((node) => node.id));
@@ -402,6 +639,28 @@ export const App = () => {
 
   const updateDirtyFromDocument = (nextDocument: DocumentFile) => {
     setIsDirty(serializeDocument(nextDocument) !== persistedSnapshotRef.current);
+  };
+
+  const handleGraphSidebarResizeStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = graphSidebarWidth;
+    setGraphSidebarResizing(true);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = startWidth + moveEvent.clientX - startX;
+      setGraphSidebarWidth(clamp(nextWidth, GRAPH_SIDEBAR_MIN_WIDTH, GRAPH_SIDEBAR_MAX_WIDTH));
+    };
+    const handlePointerUp = () => {
+      setGraphSidebarResizing(false);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
   };
 
   const clampDocumentToViewport = (nextDocument: DocumentFile) => {
@@ -460,9 +719,13 @@ export const App = () => {
 
     setWorkspaceLoading(true);
     try {
-      const result = await window.electronApp.listWorkspaceEntries();
-      setWorkspaceRootPath(result.rootPath);
-      setWorkspaceEntries(result.entries);
+      const [entriesResult, summariesResult] = await Promise.all([
+        window.electronApp.listWorkspaceEntries(),
+        window.electronApp.listWorkspaceDocumentSummaries?.(),
+      ]);
+      setWorkspaceRootPath(entriesResult.rootPath);
+      setWorkspaceEntries(entriesResult.entries);
+      setWorkspaceDocumentSummaries(summariesResult?.documents ?? []);
       setWorkspaceError(null);
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : "读取工作目录失败。");
@@ -498,7 +761,7 @@ export const App = () => {
       clearFuture?: boolean;
     },
   ) => {
-    const currentDocument = documentFile;
+    const currentDocument = documentFileRef.current;
     const resolved = typeof updater === "function"
       ? (updater as (current: DocumentFile) => DocumentFile)(currentDocument)
       : updater;
@@ -514,6 +777,7 @@ export const App = () => {
       historyFutureRef.current = [];
     }
 
+    documentFileRef.current = nextDocument;
     setDocumentFile(nextDocument);
     syncEditorStateToDocument(nextDocument);
     syncPageSelection(nextDocument);
@@ -600,6 +864,24 @@ export const App = () => {
     options?: { avoidVerticalOverlap?: boolean },
   ) => {
     patchDocument((current) => updateNodeInDocument(current, nodeId, updater, options), markDirty);
+  };
+
+  const updateSelectedTextNodes = (updater: (content: RichTextDoc) => RichTextDoc) => {
+    const selectedSet = new Set(selectedNodeIds);
+    const hasTarget = documentFile.nodes.some((node) => selectedSet.has(node.id) && node.type === "text");
+    if (!hasTarget) {
+      return false;
+    }
+
+    patchDocument((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        selectedSet.has(node.id) && node.type === "text"
+          ? { ...node, content: updater(node.content) }
+          : node,
+      ),
+    }));
+    return true;
   };
 
   const deleteSelectedNodes = () => {
@@ -921,51 +1203,74 @@ export const App = () => {
   };
 
   const handleSetFontFamily = (fontFamily: string) => {
-    if (!editingNodeId) {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "set-font-family",
+        fontFamily,
+        nonce: editorCommandNonceRef.current++,
+      });
       return;
     }
 
-    setEditorCommand({
-      type: "set-font-family",
-      fontFamily,
-      nonce: editorCommandNonceRef.current++,
-    });
+    updateSelectedTextNodes((content) => setRichTextFontFamily(content, fontFamily));
   };
 
   const handleSetTextColor = (color: string) => {
-    if (!editingNodeId) {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "set-text-color",
+        color,
+        nonce: editorCommandNonceRef.current++,
+      });
       return;
     }
 
-    setEditorCommand({
-      type: "set-text-color",
-      color,
-      nonce: editorCommandNonceRef.current++,
-    });
+    updateSelectedTextNodes((content) => setRichTextColor(content, color));
   };
 
   const handleSetFontSize = (fontSize: string) => {
-    if (!editingNodeId) {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "set-font-size",
+        fontSize,
+        nonce: editorCommandNonceRef.current++,
+      });
       return;
     }
 
-    setEditorCommand({
-      type: "set-font-size",
-      fontSize,
-      nonce: editorCommandNonceRef.current++,
-    });
+    updateSelectedTextNodes((content) => setRichTextFontSize(content, fontSize));
   };
 
   const handleSetHighlightColor = (color: string) => {
-    if (!editingNodeId) {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "set-highlight-color",
+        color,
+        nonce: editorCommandNonceRef.current++,
+      });
       return;
     }
 
-    setEditorCommand({
-      type: "set-highlight-color",
-      color,
-      nonce: editorCommandNonceRef.current++,
-    });
+    updateSelectedTextNodes((content) => setRichTextHighlightColor(content, color));
+  };
+
+  const handleToggleInlineStyle = (type: "toggle-bold" | "toggle-italic" | "toggle-underline" | "toggle-strike") => {
+    if (editingNodeId) {
+      setEditorCommand({
+        type,
+        nonce: editorCommandNonceRef.current++,
+      });
+      return;
+    }
+
+    const markByCommand = {
+      "toggle-bold": "bold",
+      "toggle-italic": "italic",
+      "toggle-underline": "underline",
+      "toggle-strike": "strike",
+    } as const satisfies Record<"toggle-bold" | "toggle-italic" | "toggle-underline" | "toggle-strike", TextMark>;
+
+    updateSelectedTextNodes((content) => toggleRichTextMark(content, markByCommand[type]));
   };
 
   const handleSetPageBackground = (color: string) => {
@@ -1080,7 +1385,7 @@ export const App = () => {
     }
   };
 
-  const handleOpenWorkspaceFile = async (filePath: string) => {
+  const handleOpenWorkspaceFile = async (filePath: string, targetPageIndex?: number) => {
     if (!window.electronApp?.openDocumentAtPath) {
       return;
     }
@@ -1105,6 +1410,10 @@ export const App = () => {
         savePath: result.filePath,
       });
       expandDirectoriesForFile(result.filePath);
+      if (typeof targetPageIndex === "number") {
+        const maxPageCount = Math.max(loaded.appearance.pages.count, inferRequiredPageCount(loaded));
+        setActivePageIndex(Math.max(0, Math.min(targetPageIndex, maxPageCount - 1)));
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
     }
@@ -1803,9 +2112,8 @@ export const App = () => {
         };
         dragDidMoveRef.current = dragDidMoveRef.current || delta.x !== 0 || delta.y !== 0;
 
-        setDocumentFile((current) => ({
-          ...current,
-          nodes: current.nodes.map((node) => {
+        setDocumentFile((current) => {
+          const nextNodes = current.nodes.map((node) => {
             const startPosition = interaction.startPositions[node.id];
 
             if (!startPosition) {
@@ -1816,8 +2124,14 @@ export const App = () => {
               ...node,
               ...dragNode(startPosition, delta),
             };
-          }),
-        }));
+          });
+
+          return {
+            ...current,
+            nodes: nextNodes,
+            pageBounds: fitPageBoundsToNodes(nextNodes),
+          };
+        });
         return;
       }
 
@@ -1827,9 +2141,8 @@ export const App = () => {
           y: (event.clientY - interaction.startPointerY) / documentFile.viewState.zoom,
         };
         resizeDidMoveRef.current = resizeDidMoveRef.current || delta.x !== 0 || delta.y !== 0;
-        setDocumentFile((current) => ({
-          ...current,
-          nodes: current.nodes.map((node) => {
+        setDocumentFile((current) => {
+          const nextNodes = current.nodes.map((node) => {
             if (node.id !== interaction.nodeId) {
               return node;
             }
@@ -1844,8 +2157,14 @@ export const App = () => {
                 current.pageBounds.x,
               ),
             };
-          }),
-        }));
+          });
+
+          return {
+            ...current,
+            nodes: nextNodes,
+            pageBounds: fitPageBoundsToNodes(nextNodes),
+          };
+        });
       }
     };
 
@@ -1902,6 +2221,30 @@ export const App = () => {
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [activePageIndex, documentFile, interaction]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const syncCanvasViewportSize = () => {
+      setCanvasViewportSize({
+        width: canvas.clientWidth,
+        height: canvas.clientHeight,
+      });
+    };
+
+    syncCanvasViewportSize();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", syncCanvasViewportSize);
+      return () => window.removeEventListener("resize", syncCanvasViewportSize);
+    }
+
+    const observer = new ResizeObserver(syncCanvasViewportSize);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
 
   const startNodeDrag = (
     event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation"> & { button?: number },
@@ -1978,43 +2321,151 @@ export const App = () => {
     });
   };
 
+  const viewportForScrollbars = {
+    width: canvasViewportSize.width || canvasRef.current?.clientWidth || 0,
+    height: canvasViewportSize.height || canvasRef.current?.clientHeight || 0,
+  };
+  const cameraBounds = getCameraBounds(documentFile.viewState, documentFile.pageBounds, viewportForScrollbars);
+  const scrollbarInset = 12;
+  const scrollbarThickness = 12;
+  const horizontalTrackSize = Math.max(0, viewportForScrollbars.width - scrollbarInset * 2 - scrollbarThickness);
+  const verticalTrackSize = Math.max(0, viewportForScrollbars.height - scrollbarInset * 2 - scrollbarThickness);
+  const horizontalScrollbar = getScrollbarMetrics(
+    documentFile.viewState.cameraX,
+    cameraBounds.minCameraX,
+    cameraBounds.maxCameraX,
+    horizontalTrackSize,
+  );
+  const verticalScrollbar = getScrollbarMetrics(
+    documentFile.viewState.cameraY,
+    cameraBounds.minCameraY,
+    cameraBounds.maxCameraY,
+    verticalTrackSize,
+  );
+  const showHorizontalScrollbar = horizontalScrollbar.scrollRange > 1 && horizontalTrackSize > 0;
+  const showVerticalScrollbar = verticalScrollbar.scrollRange > 1 && verticalTrackSize > 0;
+
+  const setCameraFromScrollbar = (axis: "x" | "y", pointerCoordinate: number, thumbSize: number, trackSize: number) => {
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) {
+      return;
+    }
+
+    const trackStart = axis === "x"
+      ? canvasRect.left + scrollbarInset
+      : canvasRect.top + scrollbarInset;
+    const thumbTravel = Math.max(0, trackSize - thumbSize);
+    const ratio = thumbTravel > 0
+      ? clamp((pointerCoordinate - trackStart - thumbSize / 2) / thumbTravel, 0, 1)
+      : 0;
+
+    setDocumentFile((current) => {
+      const bounds = getCameraBounds(current.viewState, current.pageBounds, {
+        width: canvasRef.current?.clientWidth ?? viewportForScrollbars.width,
+        height: canvasRef.current?.clientHeight ?? viewportForScrollbars.height,
+      });
+
+      if (axis === "x") {
+        return {
+          ...current,
+          viewState: {
+            ...current.viewState,
+            cameraX: bounds.maxCameraX - ratio * Math.max(0, bounds.maxCameraX - bounds.minCameraX),
+          },
+        };
+      }
+
+      return {
+        ...current,
+        viewState: {
+          ...current.viewState,
+          cameraY: bounds.maxCameraY - ratio * Math.max(0, bounds.maxCameraY - bounds.minCameraY),
+        },
+      };
+    });
+  };
+
+  const startScrollbarDrag = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    axis: "x" | "y",
+    thumbSize: number,
+    trackSize: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const pointerCoordinate = axis === "x" ? event.clientX : event.clientY;
+    setCameraFromScrollbar(axis, pointerCoordinate, thumbSize, trackSize);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setCameraFromScrollbar(axis, axis === "x" ? moveEvent.clientX : moveEvent.clientY, thumbSize, trackSize);
+    };
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+  };
+
   return (
     <div className="app-shell">
-      <Toolbar
-        zoom={documentFile.viewState.zoom}
-        dirty={isDirty}
-        canUndo={historyPastRef.current.length > 0}
-        canRedo={historyFutureRef.current.length > 0}
-        canInsertTable={editingNodeId !== null || !!selectedTextNode}
-        canInsertTableColumn={editingNodeId !== null}
-        canFormatText={editingNodeId !== null}
-        onNew={handleNewDocument}
-        onOpen={handleOpenClick}
-        onSave={handleSave}
-        onSaveAs={handleSaveAs}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onAddText={handleAddText}
-        onAddImage={handleImageClick}
-        onAddAttachment={handleAttachmentClick}
-        onInsertTable={handleInsertTable}
-        onInsertTableColumn={handleInsertTableColumn}
-        onInsertTableColumnLeft={handleInsertTableColumnLeft}
-        onDeleteTableColumn={handleDeleteTableColumn}
-        onSetFontFamily={handleSetFontFamily}
-        onSetFontSize={handleSetFontSize}
-        onSetTextColor={handleSetTextColor}
-        onSetHighlightColor={handleSetHighlightColor}
-        pageBackground={documentFile.appearance.pageBackground}
-        gridEnabled={documentFile.appearance.grid.enabled}
-        gridColor={documentFile.appearance.grid.color}
-        gridSize={documentFile.appearance.grid.size}
-        onSetPageBackground={handleSetPageBackground}
-        onSetGridEnabled={handleSetGridEnabled}
-        onSetGridColor={handleSetGridColor}
-        onSetGridSize={handleSetGridSize}
-        onZoomChange={handleZoomChange}
-      />
+      <div className="topbar-shell">
+        <div className="topbar-actions-row">
+          <button type="button" className="toolbar-button toolbar-icon-button" disabled={historyPastRef.current.length === 0} onClick={handleUndo} aria-label="撤销">↶</button>
+          <button type="button" className="toolbar-button toolbar-icon-button" disabled={historyFutureRef.current.length === 0} onClick={handleRedo} aria-label="重做">↷</button>
+          <div className="toolbar-popover-anchor topbar-file-menu-anchor">
+            <button
+              type="button"
+              className={showFileMenu ? "toolbar-button toolbar-file-button active" : "toolbar-button toolbar-file-button"}
+              onClick={() => setShowFileMenu((current) => !current)}
+            >
+              文件
+            </button>
+            {showFileMenu ? (
+              <div className="toolbar-file-menu">
+                <button type="button" className="toolbar-file-menu-item" onClick={handleNewDocument}>新建</button>
+                <button type="button" className="toolbar-file-menu-item" onClick={handleOpenClick}>打开</button>
+                <button type="button" className="toolbar-file-menu-item primary" onClick={handleSave}>保存</button>
+                <button type="button" className="toolbar-file-menu-item" onClick={handleSaveAs}>另存为</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <Toolbar
+          zoom={documentFile.viewState.zoom}
+          dirty={isDirty}
+          canInsertTable={editingNodeId !== null || !!selectedTextNode}
+          canInsertTableColumn={editingNodeId !== null}
+          canFormatText={editingNodeId !== null || hasSelectedTextNodes}
+          onAddText={handleAddText}
+          onAddImage={handleImageClick}
+          onAddAttachment={handleAttachmentClick}
+          onInsertTable={handleInsertTable}
+          onInsertTableColumn={handleInsertTableColumn}
+          onInsertTableColumnLeft={handleInsertTableColumnLeft}
+          onDeleteTableColumn={handleDeleteTableColumn}
+          onSetFontFamily={handleSetFontFamily}
+          onSetFontSize={handleSetFontSize}
+          onSetTextColor={handleSetTextColor}
+          onSetHighlightColor={handleSetHighlightColor}
+          onToggleBold={() => handleToggleInlineStyle("toggle-bold")}
+          onToggleItalic={() => handleToggleInlineStyle("toggle-italic")}
+          onToggleUnderline={() => handleToggleInlineStyle("toggle-underline")}
+          onToggleStrike={() => handleToggleInlineStyle("toggle-strike")}
+          pageBackground={documentFile.appearance.pageBackground}
+          gridEnabled={documentFile.appearance.grid.enabled}
+          gridColor={documentFile.appearance.grid.color}
+          gridSize={documentFile.appearance.grid.size}
+          onSetPageBackground={handleSetPageBackground}
+          onSetGridEnabled={handleSetGridEnabled}
+          onSetGridColor={handleSetGridColor}
+          onSetGridSize={handleSetGridSize}
+          onZoomChange={handleZoomChange}
+        />
+      </div>
 
       <input
         ref={openInputRef}
@@ -2130,27 +2581,102 @@ export const App = () => {
         </div>
       ) : null}
 
-      <div className="workspace-shell">
-        <aside className="file-sidebar">
-          <FileSidebar
-            entries={workspaceEntries}
-            rootPath={workspaceRootPath}
-            currentFilePath={currentSavePath}
-            expandedDirectories={expandedDirectories}
-            loading={workspaceLoading}
-            errorMessage={workspaceError}
-            onToggleDirectory={handleToggleDirectory}
-            onOpenFile={handleOpenWorkspaceFile}
-            onFileContextMenu={handleFileContextMenu}
-            renamingFilePath={renamingFilePath}
-            renamingFileName={renamingFileName}
-            onRenamingFileNameChange={setRenamingFileName}
-            onCommitFileRename={handleCommitWorkspaceFileRename}
-            onCancelFileRename={handleCancelWorkspaceFileRename}
-            onRefresh={() => {
-              refreshWorkspaceEntries().catch(() => {});
+      <div className="content-shell">
+        <aside className="left-rail">
+          <button
+            type="button"
+            className={leftSidebarMode === "files" && !fileSidebarCollapsed ? "sidebar-menu-button left-rail-button active" : "sidebar-menu-button left-rail-button"}
+            aria-label={fileSidebarCollapsed ? "展开文件侧栏" : "收起文件侧栏"}
+            aria-pressed={!fileSidebarCollapsed}
+            onClick={() => {
+              setLeftSidebarMode("files");
+              setFileSidebarCollapsed((current) => (leftSidebarMode !== "files" ? false : !current));
             }}
-          />
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          <button
+            type="button"
+            className={leftSidebarMode === "graph" && !fileSidebarCollapsed ? "rail-graph-button left-rail-button active" : "rail-graph-button left-rail-button"}
+            aria-label={leftSidebarMode === "graph" && !fileSidebarCollapsed ? "收起网络图" : "显示网络图"}
+            aria-pressed={leftSidebarMode === "graph" && !fileSidebarCollapsed}
+            onClick={() => {
+              setLeftSidebarMode("graph");
+              setFileSidebarCollapsed((current) => (leftSidebarMode !== "graph" ? false : !current));
+            }}
+          >
+            <span className="rail-graph-dot top" />
+            <span className="rail-graph-dot middle" />
+            <span className="rail-graph-dot bottom" />
+            <span className="rail-graph-link top" />
+            <span className="rail-graph-link bottom" />
+          </button>
+        </aside>
+
+        <div className="workspace-shell">
+        <aside
+          className={[
+            "file-sidebar",
+            fileSidebarCollapsed ? "collapsed" : "",
+            leftSidebarMode === "graph" ? "graph-resizable" : "",
+            graphSidebarResizing ? "resizing" : "",
+          ].filter(Boolean).join(" ")}
+          style={
+            !fileSidebarCollapsed && leftSidebarMode === "graph"
+              ? ({
+                  "--graph-sidebar-width": `${graphSidebarWidth}px`,
+                } as CSSProperties)
+              : undefined
+          }
+        >
+          {!fileSidebarCollapsed && leftSidebarMode === "files" ? (
+            <FileSidebar
+              entries={workspaceEntries}
+              rootPath={workspaceRootPath}
+              currentFilePath={currentSavePath}
+              expandedDirectories={expandedDirectories}
+              loading={workspaceLoading}
+              errorMessage={workspaceError}
+              onToggleDirectory={handleToggleDirectory}
+              onOpenFile={handleOpenWorkspaceFile}
+              onFileContextMenu={handleFileContextMenu}
+              renamingFilePath={renamingFilePath}
+              renamingFileName={renamingFileName}
+              onRenamingFileNameChange={setRenamingFileName}
+              onCommitFileRename={handleCommitWorkspaceFileRename}
+              onCancelFileRename={handleCancelWorkspaceFileRename}
+              onRefresh={() => {
+                refreshWorkspaceEntries().catch(() => {});
+              }}
+            />
+          ) : null}
+          {!fileSidebarCollapsed && leftSidebarMode === "graph" ? (
+            <>
+              <WorkspaceGraphPanel
+                documentSummaries={sidebarDocumentSummaries}
+                rootPath={workspaceRootPath}
+                currentFilePath={currentSavePath}
+                currentPageIndex={activePageIndex}
+                onOpenFile={handleOpenWorkspaceFile}
+                onOpenPage={(filePath, pageIndex, isCurrentFile) => {
+                  if (isCurrentFile || currentSavePath === filePath) {
+                    handleSelectPage(pageIndex + 1);
+                    return;
+                  }
+
+                  void handleOpenWorkspaceFile(filePath, pageIndex);
+                }}
+              />
+              <button
+                type="button"
+                className="graph-sidebar-resize-handle"
+                aria-label="拖拽调整网络图栏宽度"
+                onPointerDown={handleGraphSidebarResizeStart}
+              />
+            </>
+          ) : null}
         </aside>
 
         <aside className="page-sidebar-column">
@@ -2569,7 +3095,38 @@ export const App = () => {
             />
           ) : null}
         </div>
+          {showHorizontalScrollbar ? (
+            <div
+              className="canvas-scrollbar canvas-scrollbar-horizontal"
+              onPointerDown={(event) => startScrollbarDrag(event, "x", horizontalScrollbar.thumbSize, horizontalTrackSize)}
+              aria-hidden="true"
+            >
+              <div
+                className="canvas-scrollbar-thumb"
+                style={{
+                  width: horizontalScrollbar.thumbSize,
+                  transform: `translateX(${horizontalScrollbar.thumbOffset}px)`,
+                }}
+              />
+            </div>
+          ) : null}
+          {showVerticalScrollbar ? (
+            <div
+              className="canvas-scrollbar canvas-scrollbar-vertical"
+              onPointerDown={(event) => startScrollbarDrag(event, "y", verticalScrollbar.thumbSize, verticalTrackSize)}
+              aria-hidden="true"
+            >
+              <div
+                className="canvas-scrollbar-thumb"
+                style={{
+                  height: verticalScrollbar.thumbSize,
+                  transform: `translateY(${verticalScrollbar.thumbOffset}px)`,
+                }}
+              />
+            </div>
+          ) : null}
         </div>
+      </div>
       </div>
     </div>
   );
