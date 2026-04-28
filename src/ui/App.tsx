@@ -273,9 +273,17 @@ const readStoredPageState = () => {
   }
 };
 
-const getStoredPageIndex = (documentId: string, maxPageCount: number) => {
+const getPageStatePathKey = (filePath: string) => `path:${filePath}`;
+const getPageStateDocumentKey = (documentId: string) => `doc:${documentId}`;
+
+const getStoredPageIndex = (documentId: string, maxPageCount: number, filePath?: string | null) => {
   const pageState = readStoredPageState();
-  const pageIndex = pageState[documentId];
+  const pageIndex = [
+    filePath ? pageState[getPageStatePathKey(filePath)] : undefined,
+    pageState[getPageStateDocumentKey(documentId)],
+    pageState[documentId],
+  ].find((value) => typeof value === "number");
+
   if (typeof pageIndex !== "number") {
     return 0;
   }
@@ -283,14 +291,16 @@ const getStoredPageIndex = (documentId: string, maxPageCount: number) => {
   return Math.max(0, Math.min(Math.round(pageIndex), Math.max(0, maxPageCount - 1)));
 };
 
-const setStoredPageIndex = (documentId: string, pageIndex: number) => {
+const setStoredPageIndex = (documentId: string, pageIndex: number, filePath?: string | null) => {
   if (typeof window === "undefined") {
     return;
   }
 
   const nextState = {
     ...readStoredPageState(),
+    [getPageStateDocumentKey(documentId)]: pageIndex,
     [documentId]: pageIndex,
+    ...(filePath ? { [getPageStatePathKey(filePath)]: pageIndex } : {}),
   };
   window.localStorage.setItem(PAGE_STATE_STORAGE_KEY, JSON.stringify(nextState));
 };
@@ -508,6 +518,7 @@ export const App = () => {
     .filter((node) => node.pageIndex === activePageIndex)
     .sort((left, right) => left.z - right.z);
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
+  const currentFileName = currentSavePath?.split(/[\\/]/).pop() ?? fileHandleRef.current?.name ?? fileNameFromMeta(documentFile);
   const pageSummaries = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const explicitTitle = documentFile.appearance.pages.titles?.[index]?.trim();
     if (explicitTitle) {
@@ -612,8 +623,8 @@ export const App = () => {
   }, [showFileMenu]);
 
   useEffect(() => {
-    setStoredPageIndex(documentFile.meta.id, activePageIndex);
-  }, [activePageIndex, documentFile.meta.id]);
+    setStoredPageIndex(documentFile.meta.id, activePageIndex, currentSavePath);
+  }, [activePageIndex, currentSavePath, documentFile.meta.id]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -805,9 +816,13 @@ export const App = () => {
 
     persistedSnapshotRef.current = serializeDocument(nextDocument);
     resetHistory();
+    documentFileRef.current = nextDocument;
     setDocumentFile(nextDocument);
-    setActivePageIndex(getStoredPageIndex(nextDocument.meta.id, nextDocument.appearance.pages.count));
-    setCurrentSavePath(options?.savePath ?? null);
+    const nextSavePath = options?.savePath ?? null;
+    const pageStatePath = nextSavePath ?? options?.fileHandle?.name ?? null;
+    const maxPageCount = Math.max(nextDocument.appearance.pages.count, inferRequiredPageCount(nextDocument));
+    setActivePageIndex(getStoredPageIndex(nextDocument.meta.id, maxPageCount, pageStatePath));
+    setCurrentSavePath(nextSavePath);
     fileHandleRef.current = options?.fileHandle ?? null;
     setActiveFileHandle(fileHandleRef.current);
     setManagedAssetUrls({});
@@ -1013,7 +1028,9 @@ export const App = () => {
     setActivePageIndex(Math.min(activePageIndex, nextDocument.appearance.pages.count - 1));
     setIsDirty(false);
     setAutosaveStatus(options.autosave ? "saved" : "idle");
-    clearAutosave();
+    if (!options.autosave) {
+      clearAutosave();
+    }
     refreshWorkspaceEntries().catch(() => {});
     return savedPath;
   };
@@ -1901,10 +1918,12 @@ export const App = () => {
     }
 
     autosaveTimeoutRef.current = window.setTimeout(() => {
+      const content = serializeDocumentJson(documentFile);
       const saveAutosave = window.electronApp?.saveDocumentToPath
-        ? saveDocumentVersion(touchDocument(documentFile), { autosave: true }).then(() => undefined)
+        ? saveDocumentVersion(touchDocument(documentFile), { autosave: true })
+            .then(() => window.electronApp?.saveAutosaveDocument?.(content) ?? Promise.resolve())
+            .then(() => setAutosaveStatus("saved"))
         : (() => {
-            const content = serializeDocumentJson(documentFile);
             return (window.electronApp?.saveAutosaveDocument
               ? window.electronApp.saveAutosaveDocument(content)
               : Promise.resolve(window.localStorage.setItem(AUTOSAVE_STORAGE_KEY, content)))
@@ -2683,7 +2702,7 @@ export const App = () => {
           <section className="sidebar-panel page-sidebar">
             <div className="sidebar-panel-header">
               <div>
-                <span>页面</span>
+                <span className="page-sidebar-title" title={currentFileName}>{currentFileName}</span>
                 <small>
                   {autosaveStatus === "pending" ? "自动保存中" : autosaveStatus === "saved" ? "已自动保存" : "文档结构"}
                 </small>

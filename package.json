@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "desktop:build": "npm run build && electron-builder --linux AppImage --publish=never",
     "desktop:dir": "npm run build && electron-builder --linux dir --publish=never",
+    "desktop:win": "npm run build && electron-builder --win portable --publish=never",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -48,6 +49,15 @@
         "AppImage"
       ],
       "category": "Office"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": null
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
     }
   }
 }

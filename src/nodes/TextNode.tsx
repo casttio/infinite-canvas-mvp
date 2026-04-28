@@ -1675,14 +1675,22 @@ export const TextNode = ({
       const cellContent = td.querySelector(":scope > .text-block-table-cell-content") ?? td;
       const blockInCell = anchorElement?.closest("[data-block-kind]");
       if (blockInCell instanceof HTMLElement && cellContent.contains(blockInCell)) {
-        blockInCell.after(fragment);
+        if (blockInCell.dataset.blockKind === "paragraph" && !blockInCell.textContent?.trim()) {
+          blockInCell.replaceWith(fragment);
+        } else {
+          blockInCell.after(fragment);
+        }
       } else {
         cellContent.appendChild(fragment);
       }
     } else {
       const currentBlock = anchorElement?.closest("[data-block-kind]");
       if (currentBlock instanceof HTMLElement && editorRef.current.contains(currentBlock)) {
-        currentBlock.after(fragment);
+        if (currentBlock.dataset.blockKind === "paragraph" && !currentBlock.textContent?.trim()) {
+          currentBlock.replaceWith(fragment);
+        } else {
+          currentBlock.after(fragment);
+        }
       } else {
         editorRef.current.appendChild(fragment);
       }
@@ -2234,14 +2242,59 @@ export const TextNode = ({
     };
   };
 
+  const getPreviousTableContext = (): { tbody: HTMLTableSectionElement; columnCount: number } | null => {
+    if (!editorRef.current) {
+      return null;
+    }
+
+    const selection = window.getSelection();
+    const anchorNode = selection?.anchorNode ?? null;
+    if (!anchorNode) {
+      return null;
+    }
+
+    const currentBlock = anchorNode instanceof Element
+      ? anchorNode.closest("[data-block-kind]")
+      : anchorNode.parentElement?.closest("[data-block-kind]");
+
+    if (
+      !(currentBlock instanceof HTMLElement) ||
+      !editorRef.current.contains(currentBlock) ||
+      currentBlock.dataset.blockKind !== "paragraph" ||
+      currentBlock.textContent?.trim()
+    ) {
+      return null;
+    }
+
+    const previousBlock = currentBlock.previousElementSibling;
+    if (!(previousBlock instanceof HTMLElement) || previousBlock.dataset.blockKind !== "table") {
+      return null;
+    }
+
+    const table = getTableElement(previousBlock);
+    const tbody = table?.querySelector("tbody");
+    if (!table || !(tbody instanceof HTMLTableSectionElement)) {
+      return null;
+    }
+
+    return {
+      tbody,
+      columnCount: table.rows.item(0)?.cells.length ?? 0,
+    };
+  };
+
   const appendRowsToCurrentTable = (rows: string[][]) => {
-    const context = getSelectionTableContext();
-    if (!context || !context.isLastRow || rows.length === 0) {
+    const normalizedRows = rows.filter((cells) => cells.length > 0);
+    if (normalizedRows.length === 0) {
       return false;
     }
 
-    const normalizedRows = rows.filter((cells) => cells.length > 0);
-    if (normalizedRows.length === 0 || normalizedRows.some((cells) => cells.length !== context.columnCount)) {
+    let context: { tbody: HTMLTableSectionElement; columnCount: number } | null = getSelectionTableContext();
+    if (!context) {
+      context = getPreviousTableContext();
+    }
+
+    if (!context || normalizedRows.some((cells) => cells.length !== context.columnCount)) {
       return false;
     }
 
@@ -2404,6 +2457,26 @@ export const TextNode = ({
     }
 
     if (event.key === "Delete" || event.key === "Backspace") {
+      if (editorSelection.type === "cell-range") {
+        const wrapper = editorRef.current?.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
+        const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
+        if (table) {
+          for (let columnIndex = editorSelection.endColumn; columnIndex >= editorSelection.startColumn; columnIndex -= 1) {
+            const cell = table.rows.item(0)?.cells.item(columnIndex);
+            if (!(cell instanceof HTMLTableCellElement)) {
+              break;
+            }
+            activeTableCellRef.current = cell;
+            if (!deleteTableColumnAtSelection()) {
+              break;
+            }
+          }
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (clearSelectedTableCells() || clearMixedRange() || deleteSelectedBlocks()) {
         event.preventDefault();
         event.stopPropagation();
