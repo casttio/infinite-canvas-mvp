@@ -27,7 +27,7 @@ import type { CanvasNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, 
 import { ImageNode } from "../nodes/ImageNode";
 import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
-import { FileSidebar, WorkspaceGraphPanel } from "./FileSidebar";
+import { FileSidebar, WorkspaceGraphPanel, getDisplayFileName } from "./FileSidebar";
 import { Toolbar } from "./Toolbar";
 
 type InteractionState =
@@ -77,10 +77,12 @@ const fileNameFromMeta = (document: DocumentFile) => `${document.meta.id}.icanva
 const CAMERA_OVERSCROLL_LEFT_TOP = 240;
 const CAMERA_OVERSCROLL_RIGHT_BOTTOM = 180;
 const ZOOM_SETTLE_DELAY_MS = 140;
+const TEXT_DRAFT_HISTORY_INTERVAL_MS = 1200;
 const AUTOSAVE_STORAGE_KEY = "icanvas.autosave.document";
 const AUTOSAVE_DELAY_MS = 800;
 const PAGE_STATE_STORAGE_KEY = "icanvas.page-state";
 const FILE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.file-sidebar.collapsed";
+const PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.page-sidebar.collapsed";
 const GRAPH_SIDEBAR_WIDTH_STORAGE_KEY = "icanvas.graph-sidebar.width";
 const GRAPH_SIDEBAR_DEFAULT_WIDTH = 360;
 const GRAPH_SIDEBAR_MIN_WIDTH = 280;
@@ -313,6 +315,14 @@ const readStoredFileSidebarCollapsed = () => {
   return window.localStorage.getItem(FILE_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
 };
 
+const readStoredPageSidebarCollapsed = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem(PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+};
+
 const readStoredGraphSidebarWidth = () => {
   if (typeof window === "undefined") {
     return GRAPH_SIDEBAR_DEFAULT_WIDTH;
@@ -457,6 +467,7 @@ export const App = () => {
   const dragDidMoveRef = useRef(false);
   const resizeDidMoveRef = useRef(false);
   const transientHistoryBaseRef = useRef<DocumentFile | null>(null);
+  const textDraftHistoryRef = useRef<{ nodeId: string; updatedAt: number } | null>(null);
   const editorCommandNonceRef = useRef(0);
   const zoomSettleTimeoutRef = useRef<number | null>(null);
   const initialDocumentRef = useRef<DocumentFile | null>(null);
@@ -472,9 +483,11 @@ export const App = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [editorCommand, setEditorCommand] = useState<TextEditorCommand | null>(null);
+  const [editorContentRevision, setEditorContentRevision] = useState(0);
   const [zoomTransitionActive, setZoomTransitionActive] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "pending" | "saved">("idle");
   const [autosaveRestoreAvailable, setAutosaveRestoreAvailable] = useState(false);
+  const [windowAlwaysOnTop, setWindowAlwaysOnTop] = useState(false);
   const [currentSavePath, setCurrentSavePath] = useState<string | null>(null);
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>([]);
@@ -482,6 +495,7 @@ export const App = () => {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(readStoredFileSidebarCollapsed);
+  const [pageSidebarCollapsed, setPageSidebarCollapsed] = useState(readStoredPageSidebarCollapsed);
   const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>("files");
   const [graphSidebarWidth, setGraphSidebarWidth] = useState(readStoredGraphSidebarWidth);
   const [graphSidebarResizing, setGraphSidebarResizing] = useState(false);
@@ -504,6 +518,12 @@ export const App = () => {
     documentFileRef.current = documentFile;
   }, [documentFile]);
 
+  useEffect(() => {
+    window.electronApp?.isWindowAlwaysOnTop?.()
+      .then(setWindowAlwaysOnTop)
+      .catch(() => {});
+  }, []);
+
   const selectedTextNode = (
     selectedNodeIds.length === 1
       ? documentFile.nodes.find((node): node is TextNodeModel => node.id === selectedNodeIds[0] && node.type === "text")
@@ -518,6 +538,7 @@ export const App = () => {
     .sort((left, right) => left.z - right.z);
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
   const currentFileName = currentSavePath?.split(/[\\/]/).pop() ?? fileHandleRef.current?.name ?? fileNameFromMeta(documentFile);
+  const currentDisplayFileName = getDisplayFileName(currentFileName);
   const pageSummaries = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const explicitTitle = documentFile.appearance.pages.titles?.[index]?.trim();
     if (explicitTitle) {
@@ -605,6 +626,14 @@ export const App = () => {
 
     window.localStorage.setItem(FILE_SIDEBAR_COLLAPSED_STORAGE_KEY, fileSidebarCollapsed ? "true" : "false");
   }, [fileSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY, pageSidebarCollapsed ? "true" : "false");
+  }, [pageSidebarCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -853,6 +882,32 @@ export const App = () => {
     patchDocument((current) => updateNodeInDocument(current, nodeId, updater, options), markDirty);
   };
 
+  const updateTextNodeDraft = (
+    nodeId: string,
+    content: RichTextDoc,
+    options?: { history?: "checkpoint" | "coalesce" },
+  ) => {
+    const now = Date.now();
+    const previousDraft = textDraftHistoryRef.current;
+    const shouldRecordHistory = options?.history === "checkpoint"
+      || !previousDraft
+      || previousDraft.nodeId !== nodeId
+      || now - previousDraft.updatedAt > TEXT_DRAFT_HISTORY_INTERVAL_MS;
+
+    applyDocumentState(
+      (current) => updateNodeInDocument(current, nodeId, (node) =>
+        node.type === "text"
+          ? { ...node, content }
+          : node),
+      {
+        markDirty: true,
+        recordHistory: shouldRecordHistory,
+        clearFuture: true,
+      },
+    );
+    textDraftHistoryRef.current = { nodeId, updatedAt: now };
+  };
+
   const updateSelectedTextNodes = (updater: (content: RichTextDoc) => RichTextDoc) => {
     const selectedSet = new Set(selectedNodeIds);
     const hasTarget = documentFile.nodes.some((node) => selectedSet.has(node.id) && node.type === "text");
@@ -1022,9 +1077,12 @@ export const App = () => {
       return;
     }
 
+    textDraftHistoryRef.current = null;
+    const currentDocument = documentFileRef.current;
     historyPastRef.current = historyPastRef.current.slice(0, -1);
-    historyFutureRef.current = [documentFile, ...historyFutureRef.current].slice(0, 100);
+    historyFutureRef.current = [currentDocument, ...historyFutureRef.current].slice(0, 100);
     applyDocumentState(previous, { clearFuture: false });
+    setEditorContentRevision((current) => current + 1);
   };
 
   const handleRedo = () => {
@@ -1033,9 +1091,12 @@ export const App = () => {
       return;
     }
 
+    textDraftHistoryRef.current = null;
+    const currentDocument = documentFileRef.current;
     historyFutureRef.current = historyFutureRef.current.slice(1);
-    historyPastRef.current = [...historyPastRef.current, documentFile].slice(-100);
+    historyPastRef.current = [...historyPastRef.current, currentDocument].slice(-100);
     applyDocumentState(next, { clearFuture: false });
+    setEditorContentRevision((current) => current + 1);
   };
 
   const handleOpenClick = async () => {
@@ -1241,6 +1302,29 @@ export const App = () => {
     }
 
     updateSelectedTextNodes((content) => setRichTextHighlightColor(content, color));
+  };
+
+  const handleApplyBlockStyle = (
+    blockStyle: string,
+    preset?: {
+      tag: string;
+      fontSize?: string;
+      color?: string;
+      fontFamily?: string;
+      bold?: boolean;
+      italic?: boolean;
+    },
+  ) => {
+    if (!editingNodeId) {
+      return;
+    }
+
+    setEditorCommand({
+      type: "apply-block-style",
+      blockStyle,
+      blockStylePreset: preset,
+      nonce: editorCommandNonceRef.current++,
+    });
   };
 
   const handleToggleInlineStyle = (type: "toggle-bold" | "toggle-italic" | "toggle-underline" | "toggle-strike") => {
@@ -2426,6 +2510,56 @@ export const App = () => {
 
   return (
     <div className="app-shell">
+      <div className="app-titlebar">
+        <div className="app-titlebar-drag-region">
+          <span>Infinite Canvas</span>
+        </div>
+        <div className="window-controls">
+          <button
+            type="button"
+            className="window-control-button"
+            aria-label="最小化"
+            onClick={() => {
+              void window.electronApp?.minimizeWindow?.();
+            }}
+          >
+            -
+          </button>
+          <button
+            type="button"
+            className="window-control-button"
+            aria-label={windowAlwaysOnTop ? "取消置顶" : "窗口置顶"}
+            aria-pressed={windowAlwaysOnTop}
+            onClick={() => {
+              window.electronApp?.toggleWindowAlwaysOnTop?.()
+                .then(setWindowAlwaysOnTop)
+                .catch(() => {});
+            }}
+          >
+            {windowAlwaysOnTop ? "●" : "○"}
+          </button>
+          <button
+            type="button"
+            className="window-control-button"
+            aria-label="最大化或还原"
+            onClick={() => {
+              void window.electronApp?.toggleMaximizeWindow?.();
+            }}
+          >
+            □
+          </button>
+          <button
+            type="button"
+            className="window-control-button close"
+            aria-label="关闭"
+            onClick={() => {
+              void window.electronApp?.closeWindow?.();
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
       <div className="topbar-shell">
         <Toolbar
           zoom={documentFile.viewState.zoom}
@@ -2452,6 +2586,7 @@ export const App = () => {
           onSetFontSize={handleSetFontSize}
           onSetTextColor={handleSetTextColor}
           onSetHighlightColor={handleSetHighlightColor}
+          onApplyBlockStyle={handleApplyBlockStyle}
           onToggleBold={() => handleToggleInlineStyle("toggle-bold")}
           onToggleItalic={() => handleToggleInlineStyle("toggle-italic")}
           onToggleUnderline={() => handleToggleInlineStyle("toggle-underline")}
@@ -2614,6 +2749,18 @@ export const App = () => {
             <span className="rail-graph-link top" />
             <span className="rail-graph-link bottom" />
           </button>
+          <button
+            type="button"
+            className={!pageSidebarCollapsed ? "rail-page-button left-rail-button active" : "rail-page-button left-rail-button"}
+            aria-label={pageSidebarCollapsed ? "展开页面栏" : "收起页面栏"}
+            aria-pressed={!pageSidebarCollapsed}
+            onClick={() => setPageSidebarCollapsed((current) => !current)}
+          >
+            <span className="rail-page-sheet" />
+            <span className="rail-page-line top" />
+            <span className="rail-page-line middle" />
+            <span className="rail-page-line bottom" />
+          </button>
         </aside>
 
         <div className="workspace-shell">
@@ -2681,16 +2828,16 @@ export const App = () => {
           ) : null}
         </aside>
 
-        <aside className="page-sidebar-column">
+        <aside className={pageSidebarCollapsed ? "page-sidebar-column collapsed" : "page-sidebar-column"}>
           <section className="sidebar-panel page-sidebar">
             <div className="sidebar-panel-header">
               <div>
-                <span className="page-sidebar-title" title={currentFileName}>{currentFileName}</span>
+                <span className="page-sidebar-title" title={currentFileName}>{currentDisplayFileName}</span>
                 <small>
                   {autosaveStatus === "pending" ? "自动保存中" : autosaveStatus === "saved" ? "已自动保存" : "文档结构"}
                 </small>
               </div>
-              <button type="button" className="sidebar-panel-action" onClick={handleAddPage}>新增页</button>
+              <button type="button" className="sidebar-panel-action icon" onClick={handleAddPage} aria-label="新增页">+</button>
             </div>
             <div className="page-sidebar-list">
             {Array.from({ length: pageCount }, (_, index) => {
@@ -2960,16 +3107,6 @@ export const App = () => {
           }));
         }}
         >
-          <div className="canvas-header">
-            <input
-              className="canvas-header-title-input"
-              type="text"
-              value={currentPageTitle}
-              onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
-              placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
-            />
-            <div className="canvas-header-meta">最近更新：{formatUpdatedAt(documentFile.meta.updatedAt)}</div>
-          </div>
           <div
             className={`canvas-grid ${zoomTransitionActive ? "zoom-transition" : ""}`}
             style={{
@@ -2988,6 +3125,19 @@ export const App = () => {
               "--page-grid-size": `${documentFile.appearance.grid.size}px`,
             } as CSSProperties}
           >
+            <div
+              className="canvas-page-title"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <input
+                className="canvas-header-title-input"
+                type="text"
+                value={currentPageTitle}
+                onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
+                placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
+              />
+            </div>
             <div
               className={[
                 "page-sheet",
@@ -3011,16 +3161,18 @@ export const App = () => {
                     selected={selectedNodeIds.includes(node.id)}
                     editing={editingNodeId === node.id}
                     command={editingNodeId === node.id ? editorCommand : null}
+                    contentRevision={editorContentRevision}
                     onSelect={() => selectNode(node.id)}
                     onBeginEdit={() => {
                       beginEditingTextNode(node.id);
                     }}
                     onCommit={(content) => {
+                      textDraftHistoryRef.current = null;
                       setEditingNodeId(null);
                       updateNode(node.id, (current) => ({ ...current, content }));
                     }}
-                    onDraftChange={(content) => {
-                      updateNode(node.id, (current) => ({ ...current, content }));
+                    onDraftChange={(content, options) => {
+                      updateTextNodeDraft(node.id, content, options);
                     }}
                     onPasteImage={handlePasteImageIntoText}
                     onAutoResize={(height) => {

@@ -1,4 +1,5 @@
-import type { DocumentFile } from "../model/types";
+import type { CanvasNode, DocumentFile } from "../model/types";
+import { richTextDocToHtml } from "../nodes/richText";
 
 const sortValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -23,107 +24,91 @@ const escapeHtml = (value: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
+const escapeAttribute = (value: string) => escapeHtml(value).replaceAll("\"", "&quot;");
+
 const escapeScriptJson = (value: string) =>
   value
     .replaceAll("<", "\\u003c")
     .replaceAll(">", "\\u003e")
     .replaceAll("&", "\\u0026");
 
-const plainTextFromInline = (inline: unknown): string => {
-  if (!inline || typeof inline !== "object") {
-    return "";
+const pageTitle = (document: DocumentFile, pageIndex: number) =>
+  document.appearance.pages.titles?.[pageIndex]?.trim() || `页面 ${pageIndex + 1}`;
+
+const nodeStyle = (document: DocumentFile, node: CanvasNode) => [
+  `left: ${node.x - document.pageBounds.x}px;`,
+  `top: ${node.y - document.pageBounds.y}px;`,
+  `width: ${node.w}px;`,
+  `height: ${node.h}px;`,
+  `z-index: ${node.z};`,
+].join(" ");
+
+const renderImageNode = (document: DocumentFile, node: Extract<CanvasNode, { type: "image" }>) => {
+  const asset = document.assets[node.assetId];
+  const style = nodeStyle(document, node);
+
+  if (!asset) {
+    return `<div class="canvas-node preview-attachment-node" style="${style}">资源缺失</div>`;
   }
 
-  const record = inline as Record<string, unknown>;
-  if (record.type === "text") {
-    return typeof record.text === "string" ? record.text : "";
+  if (asset.storage === "managed") {
+    return `<div class="canvas-node preview-attachment-node" style="${style}"><strong>${escapeHtml(asset.name)}</strong><span>${escapeHtml(asset.relativePath ?? "受管附件")}</span></div>`;
   }
 
-  if (record.type === "break") {
-    return "\n";
+  if (asset.type === "image" && asset.data) {
+    return `<div class="canvas-node preview-image-node" style="${style}"><img src="${escapeAttribute(asset.data)}" alt="${escapeAttribute(asset.name)}" /></div>`;
   }
 
-  if (record.type === "image") {
-    return "[图片]";
+  if (asset.type === "html" && asset.data) {
+    return `<div class="canvas-node preview-frame-node" style="${style}"><iframe srcdoc="${escapeAttribute(asset.data)}" sandbox="" title="${escapeAttribute(asset.name)}"></iframe></div>`;
   }
 
-  return "";
+  if (asset.type === "pdf" && asset.data) {
+    return `<div class="canvas-node preview-frame-node" style="${style}"><iframe src="${escapeAttribute(asset.data)}" title="${escapeAttribute(asset.name)}"></iframe></div>`;
+  }
+
+  return `<div class="canvas-node preview-attachment-node" style="${style}"><strong>${escapeHtml(asset.name)}</strong><span>${escapeHtml(asset.mimeType || "附件")}</span></div>`;
 };
 
-const plainTextFromBlock = (block: unknown): string => {
-  if (!block || typeof block !== "object") {
-    return "";
+const renderNode = (document: DocumentFile, node: CanvasNode) => {
+  if (node.type === "image") {
+    return renderImageNode(document, node);
   }
 
-  const record = block as Record<string, unknown>;
-  if (record.type === "paragraph") {
-    return Array.isArray(record.content)
-      ? record.content.map(plainTextFromInline).join("")
-      : "";
-  }
+  return `<div class="canvas-node preview-text-node" style="${nodeStyle(document, node)}">${richTextDocToHtml(node.content, document.assets)}</div>`;
+};
 
-  if (record.type === "table") {
-    const rows = Array.isArray(record.rows) ? record.rows : [];
-    return rows.map((row) => {
-      if (!row || typeof row !== "object") {
-        return "";
-      }
+const pagePreviewHeight = (document: DocumentFile, nodes: CanvasNode[]) => {
+  const maxNodeBottom = nodes.reduce(
+    (bottom, node) => Math.max(bottom, node.y - document.pageBounds.y + node.h + 80),
+    0,
+  );
 
-      const cells = Array.isArray((row as Record<string, unknown>).cells)
-        ? (row as Record<string, unknown>).cells as unknown[]
-        : [];
-
-      return cells.map((cell) => {
-        if (!cell || typeof cell !== "object") {
-          return "";
-        }
-
-        const content = Array.isArray((cell as Record<string, unknown>).content)
-          ? (cell as Record<string, unknown>).content as unknown[]
-          : [];
-        return content.map(plainTextFromBlock).join(" ").trim();
-      }).join(" | ");
-    }).join("\n");
-  }
-
-  return "";
+  return Math.max(document.appearance.pages.height, maxNodeBottom);
 };
 
 const documentPreviewHtml = (document: DocumentFile) => {
-  const nodes = [...document.nodes].sort((left, right) =>
-    (left.pageIndex - right.pageIndex)
-    || (left.y - right.y)
-    || (left.x - right.x)
-    || (left.z - right.z));
+  const pageCount = Math.max(
+    document.appearance.pages.count,
+    document.nodes.reduce((count, node) => Math.max(count, node.pageIndex + 1), 1),
+  );
 
-  return nodes.map((node) => {
-    if (node.type === "image") {
-      const asset = document.assets[node.assetId];
-      if (!asset) {
-        return `<section class="node image-node"><h2>附件块</h2><p>资源缺失</p></section>`;
-      }
+  return Array.from({ length: pageCount }, (_, pageIndex) => {
+    const nodes = document.nodes
+      .filter((node) => node.pageIndex === pageIndex)
+      .sort((left, right) => left.z - right.z || left.y - right.y || left.x - right.x);
+    const height = pagePreviewHeight(document, nodes);
+    const gridClass = document.appearance.grid.enabled ? " has-grid" : "";
 
-      if (asset.storage === "managed") {
-        return `<section class="node image-node"><h2>${asset.type === "pdf" ? "PDF 附件" : "附件"}</h2><p>${escapeHtml(asset.name)}</p><p class="hint">${escapeHtml(asset.relativePath ?? "受管附件")}</p></section>`;
-      }
-
-      if (asset.type === "image" && asset.data) {
-        return `<section class="node image-node"><h2>图片块</h2><img src="${asset.data}" alt="${escapeHtml(asset.name)}" /></section>`;
-      }
-
-      if (asset.type === "html" && asset.data) {
-        return `<section class="node image-node"><h2>HTML 预览</h2><p>${escapeHtml(asset.name)}</p></section>`;
-      }
-
-      if (asset.type === "pdf" && asset.data) {
-        return `<section class="node image-node"><h2>PDF 附件</h2><iframe src="${asset.data}" title="${escapeHtml(asset.name)}"></iframe></section>`;
-      }
-
-      return `<section class="node image-node"><h2>附件</h2><p>${escapeHtml(asset.name)}</p><p class="hint">${escapeHtml(asset.mimeType || "application/octet-stream")}</p></section>`;
-    }
-
-    const text = node.content.content.map(plainTextFromBlock).join("\n\n").trim();
-    return `<section class="node text-node"><h2>文本块</h2><pre>${escapeHtml(text)}</pre></section>`;
+    return `<section class="page-preview" style="width: ${document.pageBounds.w}px;">
+      <div
+        class="page-preview-canvas${gridClass}"
+        style="width: ${document.pageBounds.w}px; height: ${height}px; background: ${escapeAttribute(document.appearance.pageBackground)}; --page-grid-color: ${escapeAttribute(document.appearance.grid.color)}; --page-grid-size: ${document.appearance.grid.size}px;"
+      >
+        <div class="page-preview-title">${escapeHtml(pageTitle(document, pageIndex))}</div>
+        ${nodes.map((node) => renderNode(document, node)).join("\n")}
+      </div>
+    </section>`;
   }).join("\n");
 };
 
@@ -140,14 +125,29 @@ export const serializeDocument = (document: DocumentFile): string => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Infinite Canvas Document</title>
   <style>
-    body { margin: 0; padding: 32px; font-family: sans-serif; color: #16202a; background: #f6f7f9; }
-    main { max-width: 920px; margin: 0 auto; }
-    .node { margin: 0 0 24px; padding: 20px; border-radius: 16px; background: white; box-shadow: 0 8px 24px rgba(31, 58, 95, 0.08); }
-    h1, h2 { margin: 0 0 12px; }
-    pre { white-space: pre-wrap; word-break: break-word; margin: 0; font: inherit; line-height: 1.6; }
-    img, iframe { max-width: 100%; width: 100%; height: auto; border-radius: 12px; border: 0; }
-    iframe { min-height: 480px; background: white; }
-    .hint { color: #64748b; margin-bottom: 24px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: #16202a; background: #eef2f6; }
+    main { min-width: min-content; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
+    .hint { margin: 0 0 18px; color: #64748b; font-size: 13px; }
+    .page-preview { margin: 0 0 28px; overflow: hidden; border: 1px solid rgba(15, 23, 42, 0.14); background: white; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10); }
+    .page-preview-title { position: absolute; top: 10px; left: 12px; z-index: 3; display: flex; align-items: center; min-height: 34px; max-width: 360px; padding: 0 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.78); color: #0f172a; font-size: 22px; font-weight: 700; line-height: 1.25; }
+    .page-preview-canvas { position: relative; overflow: hidden; isolation: isolate; }
+    .page-preview-canvas.has-grid::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background-image: linear-gradient(var(--page-grid-color) 1px, transparent 1px), linear-gradient(90deg, var(--page-grid-color) 1px, transparent 1px); background-size: var(--page-grid-size) var(--page-grid-size); }
+    .canvas-node { position: absolute; z-index: 1; overflow: hidden; }
+    .preview-text-node { padding: 10px 12px; border: 1px solid rgba(15, 23, 42, 0.12); background: rgba(255, 255, 255, 0.96); color: #111827; font-size: 16px; line-height: 1.55; overflow: visible; }
+    .preview-text-node p { margin: 0; min-height: 1.55em; }
+    .text-block { margin: 0 0 8px; }
+    .text-block:last-child { margin-bottom: 0; }
+    .text-block-table-wrap { overflow: auto; max-width: 100%; }
+    .text-block-table { border-collapse: collapse; table-layout: fixed; min-width: 100%; background: white; }
+    .text-block-table td { min-width: 72px; padding: 8px 10px; border: 1px solid rgba(15, 23, 42, 0.32); vertical-align: top; }
+    .text-block-table-cell-content .text-block { margin-bottom: 6px; }
+    .text-inline-image-frame img { max-width: 100%; height: auto; vertical-align: middle; }
+    .preview-image-node img, .preview-frame-node iframe { display: block; width: 100%; height: 100%; border: 0; background: white; object-fit: contain; }
+    .preview-frame-node { border: 1px solid rgba(15, 23, 42, 0.14); background: white; }
+    .preview-attachment-node { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 16px; border: 1px solid rgba(15, 23, 42, 0.16); background: #f8fafc; color: #475569; }
+    .preview-attachment-node strong { color: #16202a; }
   </style>
 </head>
 <body>

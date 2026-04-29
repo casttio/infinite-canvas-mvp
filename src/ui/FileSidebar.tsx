@@ -48,6 +48,8 @@ const getEditableBaseName = (fileName: string) => {
   return lastDotIndex > 0 ? fileName.slice(0, lastDotIndex) : fileName;
 };
 
+export const getDisplayFileName = getEditableBaseName;
+
 const useWorkspaceGraph = (
   containerRef: RefObject<HTMLDivElement | null>,
   documentSummaries: WorkspaceDocumentSummary[],
@@ -172,7 +174,7 @@ const useWorkspaceGraph = (
     const fileNodes = sortedDocumentSummaries.map((summary) => ({
       data: {
         id: `file:${summary.filePath}`,
-        label: summary.fileName,
+        label: getDisplayFileName(summary.fileName),
         kind: "file",
         filePath: summary.filePath,
         isCurrentFile: summary.filePath === currentFilePathRef.current ? "true" : "false",

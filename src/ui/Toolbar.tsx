@@ -12,6 +12,51 @@ const FONT_OPTIONS = [
 
 const FONT_SIZE_OPTIONS = ["11", "12", "14", "16", "18", "24", "32"];
 type ToolbarTab = "file" | "home" | "insert" | "table";
+const BLOCK_STYLE_STORAGE_KEY = "icanvas.block-style-presets";
+type BlockStylePreset = {
+  id: string;
+  label: string;
+  className: string;
+  tag: string;
+  fontSize: string;
+  color: string;
+  fontFamily: string;
+  bold: boolean;
+  italic: boolean;
+};
+const DEFAULT_BLOCK_STYLE_PRESETS: BlockStylePreset[] = [
+  { id: "title1", label: "标题 1", className: "title-1", tag: "h1", fontSize: "32", color: "#1d4ed8", fontFamily: "Georgia, serif", bold: true, italic: false },
+  { id: "title2", label: "标题 2", className: "title-2", tag: "h2", fontSize: "28", color: "#2563eb", fontFamily: "Georgia, serif", bold: true, italic: false },
+  { id: "title3", label: "标题 3", className: "title-3", tag: "h3", fontSize: "24", color: "#3b82f6", fontFamily: "Georgia, serif", bold: true, italic: false },
+  { id: "title4", label: "标题 4", className: "title-4", tag: "h4", fontSize: "20", color: "#60a5fa", fontFamily: "Georgia, serif", bold: true, italic: true },
+  { id: "title5", label: "标题 5", className: "title-5", tag: "h5", fontSize: "18", color: "#2563eb", fontFamily: "Georgia, serif", bold: true, italic: true },
+  { id: "title6", label: "标题 6", className: "title-6", tag: "h6", fontSize: "16", color: "#3b82f6", fontFamily: "Georgia, serif", bold: true, italic: true },
+  { id: "pageTitle", label: "页标题", className: "page-title", tag: "h1", fontSize: "36", color: "#0f172a", fontFamily: "Georgia, serif", bold: true, italic: false },
+  { id: "lead", label: "引文", className: "lead", tag: "p", fontSize: "18", color: "#475569", fontFamily: "Microsoft YaHei, sans-serif", bold: false, italic: false },
+  { id: "quote", label: "引用", className: "quote", tag: "blockquote", fontSize: "16", color: "#64748b", fontFamily: "Georgia, serif", bold: false, italic: true },
+  { id: "code", label: "代码", className: "code", tag: "pre", fontSize: "15", color: "#0f172a", fontFamily: "Consolas, monospace", bold: false, italic: false },
+  { id: "normal", label: "常规", className: "normal", tag: "p", fontSize: "16", color: "#0f172a", fontFamily: "Microsoft YaHei, sans-serif", bold: false, italic: false },
+];
+
+const readBlockStylePresets = () => {
+  if (typeof window === "undefined") {
+    return DEFAULT_BLOCK_STYLE_PRESETS;
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BLOCK_STYLE_STORAGE_KEY) ?? "null");
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_BLOCK_STYLE_PRESETS;
+    }
+
+    return DEFAULT_BLOCK_STYLE_PRESETS.map((fallback) => ({
+      ...fallback,
+      ...(parsed.find((item) => item?.id === fallback.id) ?? {}),
+    }));
+  } catch {
+    return DEFAULT_BLOCK_STYLE_PRESETS;
+  }
+};
 
 interface ToolbarProps {
   zoom: number;
@@ -38,6 +83,14 @@ interface ToolbarProps {
   onSetFontSize: (fontSize: string) => void;
   onSetTextColor: (color: string) => void;
   onSetHighlightColor: (color: string) => void;
+  onApplyBlockStyle: (style: string, preset?: {
+    tag: string;
+    fontSize?: string;
+    color?: string;
+    fontFamily?: string;
+    bold?: boolean;
+    italic?: boolean;
+  }) => void;
   onToggleBold: () => void;
   onToggleItalic: () => void;
   onToggleUnderline: () => void;
@@ -78,6 +131,7 @@ export const Toolbar = ({
   onSetFontSize,
   onSetTextColor,
   onSetHighlightColor,
+  onApplyBlockStyle,
   onToggleBold,
   onToggleItalic,
   onToggleUnderline,
@@ -97,6 +151,11 @@ export const Toolbar = ({
   const [fontSize, setFontSize] = useState("11");
   const [textColor, setTextColor] = useState("#0f172a");
   const [highlightColor, setHighlightColor] = useState("#fef200");
+  const [showBlockStyleMenu, setShowBlockStyleMenu] = useState(false);
+  const [showBlockStyleEditor, setShowBlockStyleEditor] = useState(false);
+  const [blockStylePresets, setBlockStylePresets] = useState(readBlockStylePresets);
+  const [editingBlockStyleId, setEditingBlockStyleId] = useState(DEFAULT_BLOCK_STYLE_PRESETS[0].id);
+  const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
 
   const applyFontFamily = (value: string) => {
     setFontFamily(value);
@@ -117,6 +176,39 @@ export const Toolbar = ({
     setHighlightColor(value);
     onSetHighlightColor(value);
   };
+
+  const persistBlockStylePresets = (nextPresets: BlockStylePreset[]) => {
+    setBlockStylePresets(nextPresets);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BLOCK_STYLE_STORAGE_KEY, JSON.stringify(nextPresets));
+    }
+  };
+
+  const updateBlockStylePreset = (id: string, patch: Partial<BlockStylePreset>) => {
+    persistBlockStylePresets(blockStylePresets.map((preset) =>
+      preset.id === id ? { ...preset, ...patch } : preset));
+  };
+
+  const resetBlockStylePresets = () => {
+    persistBlockStylePresets(DEFAULT_BLOCK_STYLE_PRESETS);
+  };
+
+  const getBlockStyleCommandPreset = (preset: BlockStylePreset) => ({
+    tag: preset.tag,
+    fontSize: `${preset.fontSize}px`,
+    color: preset.color,
+    fontFamily: preset.fontFamily,
+    bold: preset.bold,
+    italic: preset.italic,
+  });
+
+  const getBlockStylePreviewStyle = (preset: BlockStylePreset): CSSProperties => ({
+    color: preset.color,
+    fontSize: `${preset.fontSize}px`,
+    fontFamily: preset.fontFamily,
+    fontWeight: preset.bold ? 700 : 400,
+    fontStyle: preset.italic ? "italic" : "normal",
+  });
 
   const renderSubToolbar = () => {
     if (activeTab === "file") {
@@ -188,6 +280,149 @@ export const Toolbar = ({
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canUndo} onClick={onUndo} aria-label="撤销">↶</button>
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canRedo} onClick={onRedo} aria-label="重做">↷</button>
         <div className="text-format-toolbar" data-preserve-editor-focus="true">
+          <div className="toolbar-popover-anchor">
+            <button
+              type="button"
+              className={showBlockStyleMenu ? "toolbar-button block-style-button active" : "toolbar-button block-style-button"}
+              disabled={!canFormatText}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => setShowBlockStyleMenu((current) => !current)}
+              aria-haspopup="menu"
+              aria-expanded={showBlockStyleMenu}
+            >
+              <span className="block-style-icon">A</span>
+              <span>样式</span>
+              <span className="block-style-caret">⌄</span>
+            </button>
+            {showBlockStyleMenu ? (
+              <div className="block-style-menu" role="menu">
+                {showBlockStyleEditor ? (
+                  <div className="block-style-editor" onPointerDown={(event) => event.preventDefault()}>
+                    <div className="block-style-editor-header">
+                      <span>样式预设</span>
+                      <button type="button" onClick={() => setShowBlockStyleEditor(false)}>完成</button>
+                    </div>
+                    <label>
+                      <span>预设</span>
+                      <select
+                        value={editingBlockStyleId}
+                        onChange={(event) => setEditingBlockStyleId(event.currentTarget.value)}
+                      >
+                        {blockStylePresets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>{preset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>名称</span>
+                      <input
+                        value={editingBlockStyle.label}
+                        onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { label: event.currentTarget.value })}
+                      />
+                    </label>
+                    <label>
+                      <span>字体</span>
+                      <select
+                        value={editingBlockStyle.fontFamily}
+                        onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { fontFamily: event.currentTarget.value })}
+                      >
+                        {FONT_OPTIONS.map((font) => (
+                          <option key={font.value} value={font.value}>{font.label}</option>
+                        ))}
+                        <option value="Georgia, serif">Georgia</option>
+                        <option value="Consolas, monospace">Consolas</option>
+                      </select>
+                    </label>
+                    <div className="block-style-editor-grid">
+                      <label>
+                        <span>字号</span>
+                        <input
+                          type="number"
+                          min={10}
+                          max={72}
+                          value={editingBlockStyle.fontSize}
+                          onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { fontSize: event.currentTarget.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>颜色</span>
+                        <input
+                          type="color"
+                          value={editingBlockStyle.color}
+                          onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { color: event.currentTarget.value })}
+                        />
+                      </label>
+                    </div>
+                    <label>
+                      <span>块类型</span>
+                      <select
+                        value={editingBlockStyle.tag}
+                        onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { tag: event.currentTarget.value })}
+                      >
+                        <option value="p">段落</option>
+                        <option value="h1">H1</option>
+                        <option value="h2">H2</option>
+                        <option value="h3">H3</option>
+                        <option value="h4">H4</option>
+                        <option value="h5">H5</option>
+                        <option value="h6">H6</option>
+                        <option value="blockquote">引用</option>
+                        <option value="pre">代码</option>
+                      </select>
+                    </label>
+                    <div className="block-style-editor-toggles">
+                      <label><input type="checkbox" checked={editingBlockStyle.bold} onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { bold: event.currentTarget.checked })} />加粗</label>
+                      <label><input type="checkbox" checked={editingBlockStyle.italic} onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { italic: event.currentTarget.checked })} />斜体</label>
+                    </div>
+                    <div className="block-style-editor-preview" style={getBlockStylePreviewStyle(editingBlockStyle)}>
+                      {editingBlockStyle.label}
+                    </div>
+                    <button type="button" className="block-style-editor-reset" onClick={resetBlockStylePresets}>恢复默认</button>
+                  </div>
+                ) : (
+                  <>
+                    {blockStylePresets.map((style) => (
+                      <button
+                        key={style.id}
+                        type="button"
+                        className={`block-style-menu-item ${style.className}`}
+                        style={getBlockStylePreviewStyle(style)}
+                        onPointerDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          onApplyBlockStyle(style.id, getBlockStyleCommandPreset(style));
+                          setShowBlockStyleMenu(false);
+                        }}
+                      >
+                        {style.label}
+                      </button>
+                    ))}
+                    <div className="block-style-menu-separator" />
+                    <button
+                      type="button"
+                      className="block-style-menu-clear"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        const normalPreset = blockStylePresets.find((preset) => preset.id === "normal");
+                        onApplyBlockStyle("normal", normalPreset ? getBlockStyleCommandPreset(normalPreset) : undefined);
+                        setShowBlockStyleMenu(false);
+                      }}
+                    >
+                      <span>A◇</span>
+                      清除格式(C)
+                    </button>
+                    <button
+                      type="button"
+                      className="block-style-menu-edit"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => setShowBlockStyleEditor(true)}
+                    >
+                      编辑样式预设
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
           <select
             className="text-format-select font-select"
             value={fontFamily}

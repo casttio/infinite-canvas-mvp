@@ -42,6 +42,7 @@ export interface TextEditorCommand {
     | "set-font-size"
     | "set-text-color"
     | "set-highlight-color"
+    | "apply-block-style"
     | "toggle-bold"
     | "toggle-italic"
     | "toggle-underline"
@@ -52,6 +53,15 @@ export interface TextEditorCommand {
   fontFamily?: string;
   fontSize?: string;
   color?: string;
+  blockStyle?: string;
+  blockStylePreset?: {
+    tag: string;
+    fontSize?: string;
+    color?: string;
+    fontFamily?: string;
+    bold?: boolean;
+    italic?: boolean;
+  };
   assetId?: string;
   name?: string;
   data?: string;
@@ -65,10 +75,11 @@ interface TextNodeProps {
   selected: boolean;
   editing: boolean;
   command: TextEditorCommand | null;
+  contentRevision: number;
   onSelect: () => void;
   onBeginEdit: (point: { x: number; y: number }) => void;
   onCommit: (content: TextNodeType["content"]) => void;
-  onDraftChange: (content: TextNodeType["content"]) => void;
+  onDraftChange: (content: TextNodeType["content"], options?: { history?: "checkpoint" | "coalesce" }) => void;
   onPasteImage: (file: File) => Promise<{ assetId: string; name: string; data: string; w: number; h: number }>;
   onAutoResize: (height: number) => void;
   onAutoResizeWidth: (width: number) => void;
@@ -134,6 +145,7 @@ export const TextNode = ({
   selected,
   editing,
   command,
+  contentRevision,
   onSelect,
   onBeginEdit,
   onCommit,
@@ -147,12 +159,17 @@ export const TextNode = ({
 }: TextNodeProps) => {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
+  const appliedContentRevisionRef = useRef(contentRevision);
   const savedSelectionRangeRef = useRef<Range | null>(null);
   const pendingCaretPointRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredColumnCellRef = useRef<HTMLTableCellElement | null>(null);
   const hoveredTableWrapRef = useRef<HTMLElement | null>(null);
   const hoveredNodeResizeHandleRef = useRef<ResizeHandle | null>(null);
   const activeTableCellRef = useRef<HTMLTableCellElement | null>(null);
+  const selectAllCycleRef = useRef<{
+    scopeKey: string;
+    stage: "line" | "cell" | "block" | "table";
+  } | null>(null);
   const tableContextMenuRef = useRef<HTMLDivElement | null>(null);
   const textContextMenuRef = useRef<HTMLDivElement | null>(null);
   const suppressBlurCommitRef = useRef(false);
@@ -400,14 +417,14 @@ export const TextNode = ({
     syncHeightToContent();
   };
 
-  const commitDraftFromDom = (options?: { expandTables?: boolean }) => {
+  const commitDraftFromDom = (options?: { expandTables?: boolean; history?: "checkpoint" | "coalesce" }) => {
     if (!editorRef.current) {
       return;
     }
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent(options);
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: options?.history ?? "checkpoint" });
   };
 
   const getCurrentRichTextDoc = () => {
@@ -1015,7 +1032,7 @@ export const TextNode = ({
       if (collapsedStyles && applyInlineStyleAtCaret(collapsedStyles)) {
         draftHtmlRef.current = editorRef.current.innerHTML;
         syncDimensionsToContent();
-        onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+        onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
         saveCurrentSelectionRange();
         editorRef.current.focus();
         return true;
@@ -1056,6 +1073,55 @@ export const TextNode = ({
       document.execCommand("hiliteColor", false, nextCommand.color);
     }
 
+    if (nextCommand.type === "apply-block-style" && typeof nextCommand.blockStyle === "string") {
+      const stylesById: Record<string, { tag: string; fontSize?: string; bold?: boolean; italic?: boolean; color?: string; fontFamily?: string }> = {
+        title1: { tag: "h1", fontSize: "32px", bold: true, color: "#1d4ed8" },
+        title2: { tag: "h2", fontSize: "28px", bold: true, color: "#2563eb" },
+        title3: { tag: "h3", fontSize: "24px", bold: true, color: "#3b82f6" },
+        title4: { tag: "h4", fontSize: "20px", bold: true, color: "#60a5fa" },
+        title5: { tag: "h5", fontSize: "18px", bold: true, color: "#2563eb" },
+        title6: { tag: "h6", fontSize: "16px", bold: true, color: "#3b82f6" },
+        pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#0f172a" },
+        lead: { tag: "p", fontSize: "18px", color: "#475569" },
+        quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#64748b" },
+        code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#0f172a" },
+        normal: { tag: "p", fontSize: "16px", color: "#0f172a" },
+      };
+      const style = nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle];
+      if (style) {
+        document.execCommand("formatBlock", false, style.tag);
+        if (style.fontSize) {
+          document.execCommand("fontSize", false, "7");
+          const selection = window.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          const fontElements = editorRef.current.querySelectorAll("font[size='7']");
+          fontElements.forEach((element) => {
+            if (!(element instanceof HTMLElement)) {
+              return;
+            }
+            if (range && !range.intersectsNode(element)) {
+              return;
+            }
+            element.removeAttribute("size");
+            element.style.fontSize = style.fontSize!;
+            element.dataset.fontSize = style.fontSize!;
+          });
+        }
+        if (style.fontFamily) {
+          document.execCommand("fontName", false, style.fontFamily);
+        }
+        if (style.color) {
+          document.execCommand("foreColor", false, style.color);
+        }
+        if (style.bold) {
+          document.execCommand("bold");
+        }
+        if (style.italic) {
+          document.execCommand("italic");
+        }
+      }
+    }
+
     if (nextCommand.type === "toggle-bold") {
       document.execCommand("bold");
     }
@@ -1074,7 +1140,7 @@ export const TextNode = ({
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent();
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
     saveCurrentSelectionRange();
     editorRef.current.focus();
     return true;
@@ -1793,7 +1859,7 @@ export const TextNode = ({
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent({ expandTables: isStructuredHtml(html) });
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
     editorRef.current.focus();
   };
 
@@ -1872,7 +1938,7 @@ export const TextNode = ({
     if (editorRef.current) {
       draftHtmlRef.current = editorRef.current.innerHTML;
       syncDimensionsToContent({ expandTables: true });
-      onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+      onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
       editorRef.current.focus();
     }
   };
@@ -1897,7 +1963,7 @@ export const TextNode = ({
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent();
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
     editorRef.current.focus();
   };
 
@@ -2167,6 +2233,132 @@ export const TextNode = ({
     return true;
   };
 
+  const getSelectionAnchorElement = () => {
+    const selection = window.getSelection();
+    const anchorNode = selection?.anchorNode;
+    if (anchorNode instanceof HTMLElement) {
+      return anchorNode;
+    }
+
+    return anchorNode?.parentElement ?? null;
+  };
+
+  const getCellFromSelectionOrActiveRange = () => {
+    const anchorElement = getSelectionAnchorElement();
+    const selectionCell = anchorElement instanceof HTMLTableCellElement
+      ? anchorElement
+      : anchorElement?.closest("td");
+
+    if (selectionCell instanceof HTMLTableCellElement && editorRef.current?.contains(selectionCell)) {
+      activeTableCellRef.current = selectionCell;
+      return selectionCell;
+    }
+
+    if (editorSelection.type === "cell-range") {
+      const wrapper = editorRef.current?.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
+      const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
+      const cell = table?.rows.item(editorSelection.startRow)?.cells.item(editorSelection.startColumn);
+      if (cell instanceof HTMLTableCellElement) {
+        activeTableCellRef.current = cell;
+        return cell;
+      }
+    }
+
+    if (activeTableCellRef.current && editorRef.current?.contains(activeTableCellRef.current)) {
+      return activeTableCellRef.current;
+    }
+
+    return null;
+  };
+
+  const getSelectAllScope = () => {
+    const cell = getCellFromSelectionOrActiveRange();
+    if (cell) {
+      const location = getCellLocation(cell);
+      if (location) {
+        return {
+          type: "table-cell" as const,
+          key: `cell:${location.tableKey}:${location.row}:${location.column}`,
+          cell,
+          location,
+        };
+      }
+    }
+
+    const anchorElement = getSelectionAnchorElement();
+    const block = getBlockLocation(anchorElement);
+    const topBlock = getTopLevelBlockLocation(anchorElement);
+    if (block && topBlock) {
+      return {
+        type: "block" as const,
+        key: `block:${topBlock.topBlockIndex}:${block.blockIndex}`,
+        block,
+        topBlock,
+      };
+    }
+
+    return null;
+  };
+
+  const selectCurrentLineOrBlockContents = (scope: NonNullable<ReturnType<typeof getSelectAllScope>>) => {
+    const target = scope.type === "table-cell"
+      ? (getSelectionAnchorElement()?.closest("[data-block-kind]") ?? scope.cell.querySelector("[data-block-kind]") ?? scope.cell)
+      : scope.block.block;
+
+    if (!(target instanceof Node)) {
+      return false;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    setEditorSelection({ type: "none" });
+    saveCurrentSelectionRange();
+    return true;
+  };
+
+  const handleProgressiveSelectAll = () => {
+    const scope = getSelectAllScope();
+    if (!scope) {
+      return false;
+    }
+
+    const currentCycle = selectAllCycleRef.current;
+    const sameScope = currentCycle?.scopeKey === scope.key;
+
+    if (!sameScope || currentCycle.stage === "table" || currentCycle.stage === "block") {
+      selectAllCycleRef.current = { scopeKey: scope.key, stage: "line" };
+      return selectCurrentLineOrBlockContents(scope);
+    }
+
+    if (scope.type === "table-cell") {
+      if (currentCycle.stage === "line") {
+        if (selectTableRangeAtCell(scope.cell, "cell")) {
+          window.getSelection()?.removeAllRanges();
+          selectAllCycleRef.current = { scopeKey: scope.key, stage: "cell" };
+          return true;
+        }
+      }
+
+      if (currentCycle.stage === "cell") {
+        if (selectTableRangeAtCell(scope.cell, "table")) {
+          window.getSelection()?.removeAllRanges();
+          selectAllCycleRef.current = { scopeKey: scope.key, stage: "table" };
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    applyBlockRangeSelection(scope.topBlock.topBlockIndex, scope.topBlock.topBlockIndex);
+    window.getSelection()?.removeAllRanges();
+    selectAllCycleRef.current = { scopeKey: scope.key, stage: "block" };
+    return true;
+  };
+
   const openTableContextMenu = (event: ReactMouseEvent<HTMLDivElement>, cell: HTMLTableCellElement) => {
     const location = getCellLocation(cell);
     const row = cell.closest("tr");
@@ -2406,12 +2598,23 @@ export const TextNode = ({
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent();
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current));
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!editing) {
       return;
+    }
+
+    const lowerKey = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && lowerKey === "a") {
+      if (handleProgressiveSelectAll()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    } else if (!(event.shiftKey && ["shift", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(lowerKey))) {
+      selectAllCycleRef.current = null;
     }
 
     if (event.key === "Escape") {
@@ -2506,6 +2709,7 @@ export const TextNode = ({
 
   useEffect(() => {
     if (editing && editorRef.current) {
+      appliedContentRevisionRef.current = contentRevision;
       draftHtmlRef.current = richTextDocToHtml(node.content, assets);
       editorRef.current.innerHTML = draftHtmlRef.current;
       editorRef.current.focus();
@@ -2515,7 +2719,22 @@ export const TextNode = ({
   }, [editing]);
 
   useEffect(() => {
+    if (!editing || !editorRef.current || appliedContentRevisionRef.current === contentRevision) {
+      return;
+    }
+
+    appliedContentRevisionRef.current = contentRevision;
+    draftHtmlRef.current = richTextDocToHtml(node.content, assets);
+    editorRef.current.innerHTML = draftHtmlRef.current;
+    syncDimensionsToContent();
+    editorRef.current.focus();
+    placeCaretAtEnd();
+    saveCurrentSelectionRange();
+  }, [assets, contentRevision, editing, node.content]);
+
+  useEffect(() => {
     if (!editing && editorRef.current) {
+      appliedContentRevisionRef.current = contentRevision;
       draftHtmlRef.current = richTextDocToHtml(node.content, assets);
       editorRef.current.innerHTML = draftHtmlRef.current;
       syncDimensionsToContent();
@@ -2883,6 +3102,7 @@ export const TextNode = ({
       || command.type === "set-font-size"
       || command.type === "set-text-color"
       || command.type === "set-highlight-color"
+      || command.type === "apply-block-style"
       || command.type === "toggle-bold"
       || command.type === "toggle-italic"
       || command.type === "toggle-underline"
@@ -2934,6 +3154,7 @@ export const TextNode = ({
           }
         }}
         onPointerDown={(event) => {
+          selectAllCycleRef.current = null;
           const target = event.target;
           const targetElement = target instanceof HTMLElement ? target : null;
           const resizeWrapper = getTableResizeWrapper(event, targetElement);
@@ -3083,6 +3304,7 @@ export const TextNode = ({
           syncActiveTableCellFromSelection();
           saveCurrentSelectionRange();
           syncDimensionsToContent();
+          onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "coalesce" });
         }}
         onKeyDown={handleKeyDown}
         onContextMenu={(event) => {

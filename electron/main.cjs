@@ -380,6 +380,7 @@ const createMainWindow = () => {
     height: 860,
     minWidth: 900,
     minHeight: 640,
+    frame: false,
     backgroundColor: "#eef2f6",
     webPreferences: {
       contextIsolation: true,
@@ -428,6 +429,43 @@ app.whenReady().then(() => {
         throw error;
       }
     }
+  });
+
+  ipcMain.handle("window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("window:toggle-maximize", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) {
+      return false;
+    }
+
+    if (window.isMaximized()) {
+      window.unmaximize();
+      return false;
+    }
+
+    window.maximize();
+    return true;
+  });
+
+  ipcMain.handle("window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("window:is-always-on-top", (event) =>
+    BrowserWindow.fromWebContents(event.sender)?.isAlwaysOnTop() ?? false);
+
+  ipcMain.handle("window:toggle-always-on-top", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) {
+      return false;
+    }
+
+    const nextAlwaysOnTop = !window.isAlwaysOnTop();
+    window.setAlwaysOnTop(nextAlwaysOnTop);
+    return nextAlwaysOnTop;
   });
 
   ipcMain.handle("document:save", async (_event, options = {}) => {

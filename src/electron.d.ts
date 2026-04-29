@@ -115,6 +115,11 @@ declare global {
         documentPath: string;
         relativePath: string;
       }) => Promise<string | null>;
+      minimizeWindow: () => Promise<void>;
+      toggleMaximizeWindow: () => Promise<boolean>;
+      closeWindow: () => Promise<void>;
+      isWindowAlwaysOnTop: () => Promise<boolean>;
+      toggleWindowAlwaysOnTop: () => Promise<boolean>;
     };
   }
 }

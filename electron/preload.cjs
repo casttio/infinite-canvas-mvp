@@ -13,4 +13,9 @@ contextBridge.exposeInMainWorld("electronApp", {
   listWorkspaceDocumentSummaries: () => ipcRenderer.invoke("workspace:document-summaries"),
   pickAndImportAttachment: (options) => ipcRenderer.invoke("attachment:pick-import", options),
   resolveAttachmentUrl: (options) => ipcRenderer.invoke("attachment:resolve-url", options),
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
+  isWindowAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
+  toggleWindowAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
 });
