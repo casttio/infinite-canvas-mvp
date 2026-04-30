@@ -7,7 +7,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import type { ResizeHandle } from "../editor/resize";
-import type { AssetMap, TextNode as TextNodeType } from "../model/types";
+import type { AssetMap, RichTextBlock, RichTextDoc, RichTextInline, TextNode as TextNodeType } from "../model/types";
 import {
   createRichTextTableHtml,
   htmlToRichTextDoc,
@@ -113,6 +113,9 @@ type EditorSelectionState =
       endRow?: number;
     };
 
+type BlockStyleCommandPreset = NonNullable<TextEditorCommand["blockStylePreset"]>;
+type RichTextTextLeaf = Extract<RichTextInline, { type: "text" }>;
+type RichTextMark = NonNullable<RichTextTextLeaf["marks"]>[number];
 type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation" | "altKey">;
 type TableContextMenuState = {
   x: number;
@@ -173,6 +176,7 @@ export const TextNode = ({
   const tableContextMenuRef = useRef<HTMLDivElement | null>(null);
   const textContextMenuRef = useRef<HTMLDivElement | null>(null);
   const suppressBlurCommitRef = useRef(false);
+  const preserveToolbarBlurRef = useRef(false);
   const customClipboardRef = useRef<{ text: string; html: string } | null>(null);
   const pendingSelectionRef = useRef<{
     startBlockIndex: number;
@@ -192,8 +196,14 @@ export const TextNode = ({
     column: number | null;
   } | null>(null);
   const [editorSelection, setEditorSelection] = useState<EditorSelectionState>({ type: "none" });
+  const editorSelectionRef = useRef<EditorSelectionState>({ type: "none" });
   const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
   const [textContextMenu, setTextContextMenu] = useState<TextContextMenuState | null>(null);
+
+  const updateEditorSelection = (nextSelection: EditorSelectionState) => {
+    editorSelectionRef.current = nextSelection;
+    setEditorSelection(nextSelection);
+  };
 
   const getDeclaredElementWidth = (element: HTMLElement) => {
     const dataWidth = Number(element.getAttribute("data-w"));
@@ -383,6 +393,114 @@ export const TextNode = ({
     return true;
   };
 
+  const applyStyleToElement = (element: HTMLElement, styles: Partial<CSSStyleDeclaration>) => {
+    Object.assign(element.style, styles);
+    if (styles.fontFamily) {
+      element.dataset.fontFamily = styles.fontFamily;
+    }
+    if (styles.fontSize) {
+      element.dataset.fontSize = styles.fontSize;
+    }
+    if (styles.color) {
+      element.dataset.textColor = styles.color;
+    }
+    if (styles.backgroundColor) {
+      element.dataset.highlightColor = styles.backgroundColor;
+    }
+  };
+
+  const wrapTextRangeWithStyle = (
+    textNode: Text,
+    startOffset: number,
+    endOffset: number,
+    styles: Partial<CSSStyleDeclaration>,
+  ) => {
+    if (startOffset >= endOffset) {
+      return null;
+    }
+
+    const range = document.createRange();
+    range.setStart(textNode, startOffset);
+    range.setEnd(textNode, endOffset);
+
+    const span = document.createElement("span");
+    applyStyleToElement(span, styles);
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    return span;
+  };
+
+  const applyInlineStylesToSelection = (styles: Partial<CSSStyleDeclaration>) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0 || !isSelectionInsideEditor(selection)) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (range.collapsed) {
+      return false;
+    }
+
+    const selectedTextNodes: Text[] = [];
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        if (!(node instanceof Text) || !node.textContent || !range.intersectsNode(node)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (node.parentElement?.closest(".text-inline-image-frame")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let current = walker.nextNode();
+    while (current) {
+      if (current instanceof Text) {
+        selectedTextNodes.push(current);
+      }
+      current = walker.nextNode();
+    }
+
+    if (selectedTextNodes.length === 0) {
+      return false;
+    }
+
+    const styledElements: HTMLElement[] = [];
+    selectedTextNodes.forEach((textNode) => {
+      const length = textNode.textContent?.length ?? 0;
+      const startOffset = textNode === range.startContainer ? range.startOffset : 0;
+      const endOffset = textNode === range.endContainer ? range.endOffset : length;
+
+      if (startOffset === 0 && endOffset === length && textNode.parentElement instanceof HTMLElement) {
+        applyStyleToElement(textNode.parentElement, styles);
+        styledElements.push(textNode.parentElement);
+        return;
+      }
+
+      const span = wrapTextRangeWithStyle(textNode, startOffset, endOffset, styles);
+      if (span) {
+        styledElements.push(span);
+      }
+    });
+
+    if (styledElements.length > 0) {
+      const nextRange = document.createRange();
+      nextRange.setStartBefore(styledElements[0]);
+      nextRange.setEndAfter(styledElements[styledElements.length - 1]);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+      savedSelectionRangeRef.current = nextRange.cloneRange();
+    }
+
+    draftHtmlRef.current = editor.innerHTML;
+    syncDimensionsToContent();
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
+    editor.focus();
+    return true;
+  };
+
   const getInlineStylesForCommand = (nextCommand: TextEditorCommand): Partial<CSSStyleDeclaration> | null => {
     if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
       return { fontFamily: nextCommand.fontFamily };
@@ -401,6 +519,402 @@ export const TextNode = ({
     }
 
     return null;
+  };
+
+  const getBlockStyleForCommand = (nextCommand: TextEditorCommand): BlockStyleCommandPreset | null => {
+    if (nextCommand.type !== "apply-block-style" || typeof nextCommand.blockStyle !== "string") {
+      return null;
+    }
+
+    const stylesById: Record<string, BlockStyleCommandPreset> = {
+      title1: { tag: "h1", fontSize: "32px", bold: true, color: "#1d4ed8" },
+      title2: { tag: "h2", fontSize: "28px", bold: true, color: "#2563eb" },
+      title3: { tag: "h3", fontSize: "24px", bold: true, color: "#3b82f6" },
+      title4: { tag: "h4", fontSize: "20px", bold: true, italic: true, color: "#60a5fa" },
+      title5: { tag: "h5", fontSize: "18px", bold: true, italic: true, color: "#2563eb" },
+      title6: { tag: "h6", fontSize: "16px", bold: true, italic: true, color: "#3b82f6" },
+      pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#0f172a" },
+      lead: { tag: "p", fontSize: "18px", color: "#475569" },
+      quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#64748b" },
+      code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#0f172a" },
+      normal: { tag: "p", fontSize: "16px", color: "#0f172a" },
+    };
+
+    return nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle] ?? null;
+  };
+
+  const getSelectedTableCells = () => {
+    const selection = editorSelectionRef.current;
+    const highlightedCells = Array.from(editorRef.current?.querySelectorAll("td.table-cell-range-selected") ?? [])
+      .filter((cell): cell is HTMLTableCellElement => cell instanceof HTMLTableCellElement);
+    const getRangeSelectedCells = () => {
+      const editor = editorRef.current;
+      const browserSelection = window.getSelection();
+      const range = isSelectionInsideEditor(browserSelection)
+        ? browserSelection!.getRangeAt(0)
+        : savedSelectionRangeRef.current;
+
+      if (!editor || !range || !isRangeInsideEditor(range) || range.collapsed) {
+        return [];
+      }
+
+      return Array.from(editor.querySelectorAll("td"))
+        .filter((cell): cell is HTMLTableCellElement => cell instanceof HTMLTableCellElement && range.intersectsNode(cell));
+    };
+
+    if (selection.type !== "cell-range") {
+      if (highlightedCells.length > 0) {
+        return highlightedCells;
+      }
+
+      const rangeSelectedCells = getRangeSelectedCells();
+      return rangeSelectedCells.length > 1 ? rangeSelectedCells : [];
+    }
+
+    const wrapper = editorRef.current?.querySelector(`[data-table-key="${selection.tableKey}"]`);
+    const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
+    if (!table) {
+      if (highlightedCells.length > 0) {
+        return highlightedCells;
+      }
+
+      const rangeSelectedCells = getRangeSelectedCells();
+      return rangeSelectedCells.length > 1 ? rangeSelectedCells : [];
+    }
+
+    const cells: HTMLTableCellElement[] = [];
+    for (let rowIndex = selection.startRow; rowIndex <= selection.endRow; rowIndex += 1) {
+      const row = table.rows.item(rowIndex);
+      if (!row) {
+        continue;
+      }
+
+      for (let columnIndex = selection.startColumn; columnIndex <= selection.endColumn; columnIndex += 1) {
+        const cell = row.cells.item(columnIndex);
+        if (cell instanceof HTMLTableCellElement) {
+          cells.push(cell);
+        }
+      }
+    }
+    if (cells.length > 0) {
+      return cells;
+    }
+
+    if (highlightedCells.length > 0) {
+      return highlightedCells;
+    }
+
+    const rangeSelectedCells = getRangeSelectedCells();
+    return rangeSelectedCells.length > 1 ? rangeSelectedCells : [];
+  };
+
+  const getSelectedTableCellLocations = () => {
+    const uniqueLocations = new Map<string, NonNullable<ReturnType<typeof getCellLocation>>>();
+    getSelectedTableCells().forEach((cell) => {
+      const location = getCellLocation(cell);
+      if (!location) {
+        return;
+      }
+
+      uniqueLocations.set(`${location.topBlockIndex}:${location.row}:${location.column}`, location);
+    });
+    return Array.from(uniqueLocations.values());
+  };
+
+  const setTextMark = (marks: RichTextMark[] | undefined, mark: RichTextMark, enabled: boolean) => {
+    const nextMarks = marks ?? [];
+    return enabled
+      ? Array.from(new Set([...nextMarks, mark]))
+      : nextMarks.filter((current) => current !== mark);
+  };
+
+  const toggleTextMark = (marks: RichTextMark[] | undefined, mark: RichTextMark, remove: boolean) => {
+    const nextMarks = marks ?? [];
+    return remove
+      ? nextMarks.filter((current) => current !== mark)
+      : Array.from(new Set([...nextMarks, mark]));
+  };
+
+  const mapTextInBlocks = (
+    blocks: RichTextBlock[],
+    mapText: (inline: RichTextTextLeaf) => RichTextTextLeaf,
+  ): RichTextBlock[] =>
+    blocks.map((block) => {
+      if (block.type === "paragraph") {
+        const hasText = block.content.some((inline) => inline.type === "text");
+        return {
+          ...block,
+          content: hasText
+            ? block.content.map((inline) => (inline.type === "text" ? mapText(inline) : inline))
+            : [mapText({ type: "text", text: "" })],
+        };
+      }
+
+      return {
+        ...block,
+        rows: block.rows.map((row) => ({
+          ...row,
+          cells: row.cells.map((cell) => ({
+            ...cell,
+            content: mapTextInBlocks(cell.content, mapText),
+          })),
+        })),
+      };
+    });
+
+  const collectTextLeavesInBlocks = (blocks: RichTextBlock[]): RichTextTextLeaf[] =>
+    blocks.flatMap((block) => {
+      if (block.type === "paragraph") {
+        return block.content.filter((inline): inline is RichTextTextLeaf => inline.type === "text");
+      }
+
+      return block.rows.flatMap((row) => row.cells.flatMap((cell) => collectTextLeavesInBlocks(cell.content)));
+    });
+
+  const mapSelectedTableCellsInDoc = (
+    doc: RichTextDoc,
+    locations: Array<NonNullable<ReturnType<typeof getCellLocation>>>,
+    mapCellBlocks: (blocks: RichTextBlock[]) => RichTextBlock[],
+  ) => {
+    const locationsByTable = new Map<number, Map<string, true>>();
+    locations.forEach((location) => {
+      const tableLocations = locationsByTable.get(location.topBlockIndex) ?? new Map<string, true>();
+      tableLocations.set(`${location.row}:${location.column}`, true);
+      locationsByTable.set(location.topBlockIndex, tableLocations);
+    });
+
+    return {
+      ...doc,
+      content: doc.content.map((block, blockIndex) => {
+        const tableLocations = locationsByTable.get(blockIndex);
+        if (!tableLocations || block.type !== "table") {
+          return block;
+        }
+
+        return {
+          ...block,
+          rows: block.rows.map((row, rowIndex) => ({
+            ...row,
+            cells: row.cells.map((cell, columnIndex) => (
+              tableLocations.has(`${rowIndex}:${columnIndex}`)
+                ? { ...cell, content: mapCellBlocks(cell.content) }
+                : cell
+            )),
+          })),
+        };
+      }),
+    };
+  };
+
+  const applyTextCommandToLeaf = (
+    inline: RichTextTextLeaf,
+    nextCommand: TextEditorCommand,
+    options: { removeBold: boolean; removeItalic: boolean; removeUnderline: boolean; removeStrike: boolean },
+  ): RichTextTextLeaf => {
+    if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
+      return { ...inline, fontFamily: nextCommand.fontFamily };
+    }
+
+    if (nextCommand.type === "set-font-size" && typeof nextCommand.fontSize === "string") {
+      return { ...inline, fontSize: nextCommand.fontSize };
+    }
+
+    if (nextCommand.type === "set-text-color" && typeof nextCommand.color === "string") {
+      return { ...inline, color: nextCommand.color };
+    }
+
+    if (nextCommand.type === "set-highlight-color" && typeof nextCommand.color === "string") {
+      if (nextCommand.color === "transparent") {
+        const { highlightColor: _highlightColor, ...rest } = inline;
+        return rest;
+      }
+      return { ...inline, highlightColor: nextCommand.color };
+    }
+
+    if (nextCommand.type === "toggle-bold") {
+      return { ...inline, marks: toggleTextMark(inline.marks, "bold", options.removeBold) };
+    }
+
+    if (nextCommand.type === "toggle-italic") {
+      return { ...inline, marks: toggleTextMark(inline.marks, "italic", options.removeItalic) };
+    }
+
+    if (nextCommand.type === "toggle-underline") {
+      return { ...inline, marks: toggleTextMark(inline.marks, "underline", options.removeUnderline) };
+    }
+
+    if (nextCommand.type === "toggle-strike") {
+      return { ...inline, marks: toggleTextMark(inline.marks, "strike", options.removeStrike) };
+    }
+
+    const blockStyle = getBlockStyleForCommand(nextCommand);
+    if (!blockStyle) {
+      return inline;
+    }
+
+    return {
+      ...inline,
+      ...(blockStyle.fontFamily ? { fontFamily: blockStyle.fontFamily } : {}),
+      ...(blockStyle.fontSize ? { fontSize: blockStyle.fontSize } : {}),
+      ...(blockStyle.color ? { color: blockStyle.color } : {}),
+      marks: setTextMark(
+        setTextMark(inline.marks, "bold", blockStyle.bold ?? inline.marks?.includes("bold") ?? false),
+        "italic",
+        blockStyle.italic ?? inline.marks?.includes("italic") ?? false,
+      ),
+    };
+  };
+
+  const applyFormatCommandToSelectedTableCellModel = (nextCommand: TextEditorCommand) => {
+    const locations = getSelectedTableCellLocations();
+    if (locations.length === 0) {
+      return false;
+    }
+
+    const currentDoc = getCurrentRichTextDoc();
+    const selectedTextLeaves = locations.flatMap((location) => {
+      const block = currentDoc.content[location.topBlockIndex];
+      if (block?.type !== "table") {
+        return [];
+      }
+
+      const cell = block.rows[location.row]?.cells[location.column];
+      return cell ? collectTextLeavesInBlocks(cell.content) : [];
+    });
+    const options = {
+      removeBold: selectedTextLeaves.length > 0 && selectedTextLeaves.every((inline) => inline.marks?.includes("bold")),
+      removeItalic: selectedTextLeaves.length > 0 && selectedTextLeaves.every((inline) => inline.marks?.includes("italic")),
+      removeUnderline: selectedTextLeaves.length > 0 && selectedTextLeaves.every((inline) => inline.marks?.includes("underline")),
+      removeStrike: selectedTextLeaves.length > 0 && selectedTextLeaves.every((inline) => inline.marks?.includes("strike")),
+    };
+
+    const nextDoc = mapSelectedTableCellsInDoc(currentDoc, locations, (blocks) =>
+      mapTextInBlocks(blocks, (inline) => applyTextCommandToLeaf(inline, nextCommand, options)));
+
+    draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
+    if (editorRef.current) {
+      editorRef.current.innerHTML = draftHtmlRef.current;
+    }
+    syncDimensionsToContent();
+    onDraftChange(nextDoc, { history: "checkpoint" });
+    editorRef.current?.focus();
+    return true;
+  };
+
+  const getCellBlockFormattingTargets = (cell: HTMLTableCellElement) => {
+    const root = cell.querySelector(":scope > .text-block-table-cell-content") ?? cell;
+    const blocks = Array.from(root.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element.dataset.blockKind === "paragraph")
+      .map((block) => Array.from(block.children).find((child): child is HTMLElement => child instanceof HTMLElement && child.tagName.toLowerCase() !== "br") ?? block);
+
+    return blocks.length > 0 ? blocks : [root instanceof HTMLElement ? root : cell];
+  };
+
+  const getCellInlineFormattingTargets = (cell: HTMLTableCellElement) => {
+    const root = cell.querySelector(":scope > .text-block-table-cell-content") ?? cell;
+    if (!(root instanceof HTMLElement)) {
+      return [cell];
+    }
+
+    const targets = new Set<HTMLElement>();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let current = walker.nextNode();
+    while (current) {
+      if ((current.textContent ?? "").length > 0) {
+        const parent = current.parentElement;
+        if (
+          parent
+          && !parent.closest(".text-inline-image-frame")
+          && !parent.closest("[data-table-resize-handle='true']")
+        ) {
+          targets.add(parent);
+        }
+      }
+      current = walker.nextNode();
+    }
+
+    Array.from(root.querySelectorAll("[data-font-family], [data-font-size], [data-text-color], [data-highlight-color], font"))
+      .forEach((element) => {
+        if (element instanceof HTMLElement && !element.closest(".text-inline-image-frame")) {
+          targets.add(element);
+        }
+      });
+
+    return targets.size > 0 ? Array.from(targets) : getCellBlockFormattingTargets(cell);
+  };
+
+  const applyStyleToFormattingTarget = (target: HTMLElement, styles: Partial<CSSStyleDeclaration>) => {
+    Object.assign(target.style, styles);
+    if (styles.fontFamily) {
+      target.dataset.fontFamily = styles.fontFamily;
+    }
+    if (styles.fontSize) {
+      target.dataset.fontSize = styles.fontSize;
+    }
+    if (styles.color) {
+      target.dataset.textColor = styles.color;
+    }
+    if (styles.backgroundColor) {
+      target.dataset.highlightColor = styles.backgroundColor;
+    }
+  };
+
+  const replaceFormattingTargetTag = (target: HTMLElement, tagName: string) => {
+    if (target.tagName.toLowerCase() === tagName) {
+      return target;
+    }
+
+    const replacement = document.createElement(tagName);
+    Array.from(target.attributes).forEach((attribute) => replacement.setAttribute(attribute.name, attribute.value));
+    replacement.innerHTML = target.innerHTML;
+    target.replaceWith(replacement);
+    return replacement;
+  };
+
+  const applyBlockStyleToFormattingTarget = (target: HTMLElement, style: BlockStyleCommandPreset) => {
+    const nextTarget = replaceFormattingTargetTag(target, style.tag);
+    applyStyleToFormattingTarget(nextTarget, {
+      ...(style.fontSize ? { fontSize: style.fontSize } : {}),
+      ...(style.fontFamily ? { fontFamily: style.fontFamily } : {}),
+      ...(style.color ? { color: style.color } : {}),
+      ...(typeof style.bold === "boolean" ? { fontWeight: style.bold ? "700" : "400" } : {}),
+      ...(typeof style.italic === "boolean" ? { fontStyle: style.italic ? "italic" : "normal" } : {}),
+    });
+  };
+
+  const applyFormatCommandToSelectedTableCells = (nextCommand: TextEditorCommand) => {
+    const cells = getSelectedTableCells();
+    if (cells.length === 0) {
+      return false;
+    }
+
+    const inlineStyles = getInlineStylesForCommand(nextCommand);
+    const blockStyle = getBlockStyleForCommand(nextCommand);
+    if (!inlineStyles && !blockStyle) {
+      return false;
+    }
+
+    cells.forEach((cell) => {
+      if (blockStyle) {
+        getCellBlockFormattingTargets(cell).forEach((target) => applyBlockStyleToFormattingTarget(target, blockStyle));
+        getCellInlineFormattingTargets(cell).forEach((target) => applyStyleToFormattingTarget(target, {
+          ...(blockStyle.fontSize ? { fontSize: blockStyle.fontSize } : {}),
+          ...(blockStyle.fontFamily ? { fontFamily: blockStyle.fontFamily } : {}),
+          ...(blockStyle.color ? { color: blockStyle.color } : {}),
+          ...(typeof blockStyle.bold === "boolean" ? { fontWeight: blockStyle.bold ? "700" : "400" } : {}),
+          ...(typeof blockStyle.italic === "boolean" ? { fontStyle: blockStyle.italic ? "italic" : "normal" } : {}),
+        }));
+        return;
+      }
+
+      getCellInlineFormattingTargets(cell).forEach((target) => {
+        applyStyleToFormattingTarget(target, inlineStyles!);
+      });
+    });
+
+    commitDraftFromDom();
+    editorRef.current?.focus();
+    return true;
   };
 
   const syncDimensionsToContent = (options?: { expandTables?: boolean }) => {
@@ -923,7 +1437,7 @@ export const TextNode = ({
   };
 
   const clearTableCellSelection = () => {
-    setEditorSelection({ type: "none" });
+    updateEditorSelection({ type: "none" });
   };
 
   const getBlockLocation = (element: Element | null) => {
@@ -1013,6 +1527,14 @@ export const TextNode = ({
       return false;
     }
 
+    if (applyFormatCommandToSelectedTableCellModel(nextCommand)) {
+      return true;
+    }
+
+    if (applyFormatCommandToSelectedTableCells(nextCommand)) {
+      return true;
+    }
+
     if (!restoreSavedSelectionRange()) {
       if (!saveCurrentSelectionRange()) {
         editorRef.current.focus();
@@ -1035,6 +1557,12 @@ export const TextNode = ({
         onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
         saveCurrentSelectionRange();
         editorRef.current.focus();
+        return true;
+      }
+    }
+
+    if (nextCommand.type === "set-font-size" && typeof nextCommand.fontSize === "string") {
+      if (applyInlineStylesToSelection({ fontSize: nextCommand.fontSize })) {
         return true;
       }
     }
@@ -1074,20 +1602,7 @@ export const TextNode = ({
     }
 
     if (nextCommand.type === "apply-block-style" && typeof nextCommand.blockStyle === "string") {
-      const stylesById: Record<string, { tag: string; fontSize?: string; bold?: boolean; italic?: boolean; color?: string; fontFamily?: string }> = {
-        title1: { tag: "h1", fontSize: "32px", bold: true, color: "#1d4ed8" },
-        title2: { tag: "h2", fontSize: "28px", bold: true, color: "#2563eb" },
-        title3: { tag: "h3", fontSize: "24px", bold: true, color: "#3b82f6" },
-        title4: { tag: "h4", fontSize: "20px", bold: true, color: "#60a5fa" },
-        title5: { tag: "h5", fontSize: "18px", bold: true, color: "#2563eb" },
-        title6: { tag: "h6", fontSize: "16px", bold: true, color: "#3b82f6" },
-        pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#0f172a" },
-        lead: { tag: "p", fontSize: "18px", color: "#475569" },
-        quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#64748b" },
-        code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#0f172a" },
-        normal: { tag: "p", fontSize: "16px", color: "#0f172a" },
-      };
-      const style = nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle];
+      const style = getBlockStyleForCommand(nextCommand);
       if (style) {
         document.execCommand("formatBlock", false, style.tag);
         if (style.fontSize) {
@@ -1154,7 +1669,7 @@ export const TextNode = ({
       return;
     }
 
-    setEditorSelection({
+    updateEditorSelection({
       type: "cell-range",
       tableKey: start.tableKey,
       startRow: Math.min(start.row, end.row),
@@ -1165,7 +1680,7 @@ export const TextNode = ({
   };
 
   const applyBlockRangeSelection = (startBlockIndex: number, endBlockIndex: number) => {
-    setEditorSelection({
+    updateEditorSelection({
       type: "block-range",
       startBlockIndex: Math.min(startBlockIndex, endBlockIndex),
       endBlockIndex: Math.max(startBlockIndex, endBlockIndex),
@@ -1180,7 +1695,7 @@ export const TextNode = ({
     endTableKey?: string;
     endRow?: number;
   }) => {
-    setEditorSelection({
+    updateEditorSelection({
       type: "mixed-range",
       startBlockIndex: Math.min(options.startBlockIndex, options.endBlockIndex),
       endBlockIndex: Math.max(options.startBlockIndex, options.endBlockIndex),
@@ -1309,7 +1824,7 @@ export const TextNode = ({
       if (!session.startTableKey && !endCell) {
         if (session.mode !== "none") {
           session.mode = "none";
-          setEditorSelection({ type: "none" });
+          updateEditorSelection({ type: "none" });
         }
         suppressBlurCommitRef.current = false;
       }
@@ -1332,7 +1847,7 @@ export const TextNode = ({
       });
 
       if (session.mode === "none") {
-        setEditorSelection({ type: "none" });
+        updateEditorSelection({ type: "none" });
         suppressBlurCommitRef.current = false;
       } else {
         restoreEditorFocus();
@@ -1455,7 +1970,7 @@ export const TextNode = ({
     }
 
     commitDraftFromDom();
-    setEditorSelection({ type: "none" });
+    updateEditorSelection({ type: "none" });
     return true;
   };
 
@@ -1512,7 +2027,7 @@ export const TextNode = ({
     }
 
     commitDraftFromDom();
-    setEditorSelection({ type: "none" });
+    updateEditorSelection({ type: "none" });
     return true;
   };
 
@@ -1557,7 +2072,7 @@ export const TextNode = ({
     }
 
     commitDraftFromDom();
-    setEditorSelection({ type: "none" });
+    updateEditorSelection({ type: "none" });
     return true;
   };
 
@@ -2222,7 +2737,7 @@ export const TextNode = ({
     }
 
     const columnCount = table.rows.item(0)?.cells.length ?? cell.parentElement?.children.length ?? 1;
-    setEditorSelection({
+    updateEditorSelection({
       type: "cell-range",
       tableKey: location.tableKey,
       startRow: mode === "table" || mode === "column" ? 0 : location.row,
@@ -2314,7 +2829,7 @@ export const TextNode = ({
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    setEditorSelection({ type: "none" });
+    updateEditorSelection({ type: "none" });
     saveCurrentSelectionRange();
     return true;
   };
@@ -2771,6 +3286,24 @@ export const TextNode = ({
     document.addEventListener("selectionchange", handleSelectionChange);
 
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      preserveToolbarBlurRef.current = target instanceof Element && !!target.closest("[data-preserve-editor-focus='true']");
+      if (preserveToolbarBlurRef.current) {
+        saveCurrentSelectionRange();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [editing]);
 
   useEffect(() => {
@@ -3335,7 +3868,11 @@ export const TextNode = ({
             return;
           }
           const relatedTarget = event.relatedTarget;
-          if (relatedTarget instanceof HTMLElement && relatedTarget.closest("[data-preserve-editor-focus='true']")) {
+          if (
+            preserveToolbarBlurRef.current ||
+            (relatedTarget instanceof HTMLElement && relatedTarget.closest("[data-preserve-editor-focus='true']"))
+          ) {
+            preserveToolbarBlurRef.current = false;
             return;
           }
           syncDimensionsToContent();

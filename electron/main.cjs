@@ -41,6 +41,34 @@ const isPathInside = (parentPath, candidatePath) => {
   return relativePath === "" || (!!relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 };
 
+const validateEntryName = (name, label) => {
+  const normalized = typeof name === "string" ? name.trim() : "";
+  if (!normalized) {
+    throw new Error(`${label}不能为空。`);
+  }
+
+  if (normalized === "." || normalized === ".." || /[\\/]/.test(normalized)) {
+    throw new Error(`${label}不能包含路径分隔符。`);
+  }
+
+  return normalized;
+};
+
+const getWorkspacePath = async (candidatePath, options = {}) => {
+  const rootPath = path.resolve(await ensureDefaultWorkspaceDir());
+  const resolvedPath = candidatePath ? path.resolve(candidatePath) : rootPath;
+
+  if (!isPathInside(rootPath, resolvedPath)) {
+    throw new Error("只能操作工作目录内的项目。");
+  }
+
+  if (!options.allowRoot && resolvedPath === rootPath) {
+    throw new Error("不能对工作区根目录执行此操作。");
+  }
+
+  return { rootPath, resolvedPath };
+};
+
 const getDocumentSuffix = (fileName) => {
   const lowerName = fileName.toLowerCase();
   const matchedSuffix = DOCUMENT_SUFFIXES.find((suffix) => lowerName.endsWith(suffix));
@@ -597,6 +625,81 @@ app.whenReady().then(() => {
 
     await fs.rename(resolvedFilePath, targetPath);
     return targetPath;
+  });
+
+  ipcMain.handle("document:delete", async (_event, options = {}) => {
+    const filePath = typeof options.filePath === "string" ? options.filePath : "";
+    if (!filePath) {
+      throw new Error("文件路径无效。");
+    }
+
+    const { resolvedPath } = await getWorkspacePath(filePath);
+    if (!isSupportedDocumentPath(resolvedPath)) {
+      throw new Error("只能删除支持的文档文件。");
+    }
+
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isFile()) {
+      throw new Error("只能删除文件。");
+    }
+
+    await fs.rm(resolvedPath);
+  });
+
+  ipcMain.handle("workspace:create-directory", async (_event, options = {}) => {
+    const name = validateEntryName(options.name || "新建文件夹", "文件夹名");
+    const parentDirectoryPath = typeof options.parentDirectoryPath === "string" && options.parentDirectoryPath.length > 0
+      ? options.parentDirectoryPath
+      : null;
+    const { resolvedPath: parentPath } = await getWorkspacePath(parentDirectoryPath, { allowRoot: true });
+    const stats = await fs.stat(parentPath);
+    if (!stats.isDirectory()) {
+      throw new Error("目标位置不是文件夹。");
+    }
+
+    let targetPath = path.join(parentPath, name);
+    for (let index = 2; ; index += 1) {
+      try {
+        await fs.access(targetPath);
+        targetPath = path.join(parentPath, `${name} ${index}`);
+      } catch (error) {
+        if (error && typeof error === "object" && error.code === "ENOENT") {
+          break;
+        }
+        throw error;
+      }
+    }
+    await fs.mkdir(targetPath);
+    return targetPath;
+  });
+
+  ipcMain.handle("workspace:rename-directory", async (_event, options = {}) => {
+    const directoryPath = typeof options.directoryPath === "string" ? options.directoryPath : "";
+    const name = validateEntryName(options.name, "文件夹名");
+    const { rootPath, resolvedPath } = await getWorkspacePath(directoryPath);
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isDirectory()) {
+      throw new Error("只能重命名文件夹。");
+    }
+
+    const targetPath = path.join(path.dirname(resolvedPath), name);
+    if (!isPathInside(rootPath, targetPath)) {
+      throw new Error("只能操作工作目录内的项目。");
+    }
+
+    await fs.rename(resolvedPath, targetPath);
+    return targetPath;
+  });
+
+  ipcMain.handle("workspace:delete-directory", async (_event, options = {}) => {
+    const directoryPath = typeof options.directoryPath === "string" ? options.directoryPath : "";
+    const { resolvedPath } = await getWorkspacePath(directoryPath);
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isDirectory()) {
+      throw new Error("只能删除文件夹。");
+    }
+
+    await fs.rm(resolvedPath, { recursive: true, force: false });
   });
 
   ipcMain.handle("workspace:list", async () => {

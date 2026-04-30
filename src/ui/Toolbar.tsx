@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { MAX_ZOOM_SLIDER_VALUE, sliderValueToZoom, zoomToSliderValue } from "../editor/viewport";
 
@@ -155,7 +155,40 @@ export const Toolbar = ({
   const [showBlockStyleEditor, setShowBlockStyleEditor] = useState(false);
   const [blockStylePresets, setBlockStylePresets] = useState(readBlockStylePresets);
   const [editingBlockStyleId, setEditingBlockStyleId] = useState(DEFAULT_BLOCK_STYLE_PRESETS[0].id);
+  const blockStyleMenuRef = useRef<HTMLDivElement | null>(null);
   const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
+
+  const closeBlockStyleMenu = () => {
+    setShowBlockStyleMenu(false);
+    setShowBlockStyleEditor(false);
+  };
+
+  useEffect(() => {
+    if (!showBlockStyleMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && blockStyleMenuRef.current?.contains(target)) {
+        return;
+      }
+      closeBlockStyleMenu();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeBlockStyleMenu();
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showBlockStyleMenu]);
 
   const applyFontFamily = (value: string) => {
     setFontFamily(value);
@@ -280,7 +313,7 @@ export const Toolbar = ({
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canUndo} onClick={onUndo} aria-label="撤销">↶</button>
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canRedo} onClick={onRedo} aria-label="重做">↷</button>
         <div className="text-format-toolbar" data-preserve-editor-focus="true">
-          <div className="toolbar-popover-anchor">
+          <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
             <button
               type="button"
               className={showBlockStyleMenu ? "toolbar-button block-style-button active" : "toolbar-button block-style-button"}
@@ -297,10 +330,10 @@ export const Toolbar = ({
             {showBlockStyleMenu ? (
               <div className="block-style-menu" role="menu">
                 {showBlockStyleEditor ? (
-                  <div className="block-style-editor" onPointerDown={(event) => event.preventDefault()}>
+                  <div className="block-style-editor">
                     <div className="block-style-editor-header">
                       <span>样式预设</span>
-                      <button type="button" onClick={() => setShowBlockStyleEditor(false)}>完成</button>
+                      <button type="button" onClick={closeBlockStyleMenu}>完成</button>
                     </div>
                     <label>
                       <span>预设</span>
@@ -390,7 +423,7 @@ export const Toolbar = ({
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() => {
                           onApplyBlockStyle(style.id, getBlockStyleCommandPreset(style));
-                          setShowBlockStyleMenu(false);
+                          closeBlockStyleMenu();
                         }}
                       >
                         {style.label}
@@ -404,7 +437,7 @@ export const Toolbar = ({
                       onClick={() => {
                         const normalPreset = blockStylePresets.find((preset) => preset.id === "normal");
                         onApplyBlockStyle("normal", normalPreset ? getBlockStyleCommandPreset(normalPreset) : undefined);
-                        setShowBlockStyleMenu(false);
+                        closeBlockStyleMenu();
                       }}
                     >
                       <span>A◇</span>

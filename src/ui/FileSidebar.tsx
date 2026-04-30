@@ -18,12 +18,20 @@ interface FileSidebarProps {
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onMoveFileToDirectory: (filePath: string, directoryPath: string) => void;
+  onReorderFile: (filePath: string, targetFilePath: string, placement: "before" | "after") => void;
   onFileContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, path: string, currentName: string) => void;
+  onDirectoryContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, path: string, currentName: string) => void;
+  onBlankContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
   renamingFilePath: string | null;
   renamingFileName: string;
   onRenamingFileNameChange: (value: string) => void;
   onCommitFileRename: () => void;
   onCancelFileRename: () => void;
+  renamingDirectoryPath: string | null;
+  renamingDirectoryName: string;
+  onRenamingDirectoryNameChange: (value: string) => void;
+  onCommitDirectoryRename: () => void;
+  onCancelDirectoryRename: () => void;
   onRefresh: () => void;
 }
 
@@ -498,17 +506,27 @@ export const FileSidebar = ({
   onToggleDirectory,
   onOpenFile,
   onMoveFileToDirectory,
+  onReorderFile,
   onFileContextMenu,
+  onDirectoryContextMenu,
+  onBlankContextMenu,
   renamingFilePath,
   renamingFileName,
   onRenamingFileNameChange,
   onCommitFileRename,
   onCancelFileRename,
+  renamingDirectoryPath,
+  renamingDirectoryName,
+  onRenamingDirectoryNameChange,
+  onCommitDirectoryRename,
+  onCancelDirectoryRename,
   onRefresh,
 }: FileSidebarProps) => {
   const expandedSet = useMemo(() => new Set(expandedDirectories), [expandedDirectories]);
   const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
   const [dropTargetDirectoryPath, setDropTargetDirectoryPath] = useState<string | null>(null);
+  const [dropTargetFile, setDropTargetFile] = useState<{ path: string; placement: "before" | "after" } | null>(null);
+  const [rootDropTarget, setRootDropTarget] = useState(false);
 
   const getDraggedFilePath = (event: ReactDragEvent<HTMLElement>) =>
     event.dataTransfer.getData("application/x-icanvas-file-path") || draggingFilePath;
@@ -534,7 +552,80 @@ export const FileSidebar = ({
     event.stopPropagation();
     setDraggingFilePath(null);
     setDropTargetDirectoryPath(null);
+    setDropTargetFile(null);
+    setRootDropTarget(false);
     onMoveFileToDirectory(filePath, directoryPath);
+  };
+
+  const handleFileDragOver = (event: ReactDragEvent<HTMLButtonElement>, targetFilePath: string) => {
+    const filePath = getDraggedFilePath(event);
+    if (!filePath || filePath === targetFilePath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDropTargetDirectoryPath(null);
+    setRootDropTarget(false);
+    setDropTargetFile({
+      path: targetFilePath,
+      placement: event.clientY < rect.top + rect.height / 2 ? "before" : "after",
+    });
+  };
+
+  const handleFileDrop = (event: ReactDragEvent<HTMLButtonElement>, targetFilePath: string) => {
+    const filePath = getDraggedFilePath(event);
+    if (!filePath || filePath === targetFilePath || !dropTargetFile) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingFilePath(null);
+    setDropTargetDirectoryPath(null);
+    setRootDropTarget(false);
+    setDropTargetFile(null);
+    onReorderFile(filePath, targetFilePath, dropTargetFile.placement);
+  };
+
+  const handleRootDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest(".file-tree-row")) {
+      return;
+    }
+
+    const filePath = getDraggedFilePath(event);
+    if (!filePath || !rootPath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetDirectoryPath(null);
+    setDropTargetFile(null);
+    setRootDropTarget(true);
+  };
+
+  const handleRootDrop = (event: ReactDragEvent<HTMLElement>) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest(".file-tree-row")) {
+      return;
+    }
+
+    const filePath = getDraggedFilePath(event);
+    if (!filePath || !rootPath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingFilePath(null);
+    setDropTargetDirectoryPath(null);
+    setDropTargetFile(null);
+    setRootDropTarget(false);
+    onMoveFileToDirectory(filePath, rootPath);
   };
 
   const renderEntries = (items: WorkspaceEntry[]) =>
@@ -544,6 +635,35 @@ export const FileSidebar = ({
       if (entry.type === "directory") {
         const expanded = expandedSet.has(entry.path);
         const dropTarget = dropTargetDirectoryPath === entry.path;
+        const renaming = renamingDirectoryPath === entry.path;
+
+        if (renaming) {
+          return (
+            <div
+              key={entry.path}
+              className="file-tree-row directory active renaming"
+              style={{ paddingLeft: `${0.65 + depth * 0.9}rem` }}
+            >
+              <span className="file-tree-caret">{expanded ? "▾" : "▸"}</span>
+              <input
+                className="file-tree-inline-input"
+                autoFocus
+                value={renamingDirectoryName}
+                onChange={(event: ReactChangeEvent<HTMLInputElement>) => onRenamingDirectoryNameChange(event.currentTarget.value)}
+                onBlur={onCommitDirectoryRename}
+                onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                  if (event.key === "Enter") {
+                    onCommitDirectoryRename();
+                  }
+                  if (event.key === "Escape") {
+                    onCancelDirectoryRename();
+                  }
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+              />
+            </div>
+          );
+        }
 
         return (
           <div key={entry.path} className="file-tree-item">
@@ -557,6 +677,7 @@ export const FileSidebar = ({
               ].filter(Boolean).join(" ")}
               style={{ paddingLeft: `${0.65 + depth * 0.9}rem` }}
               onClick={() => onToggleDirectory(entry.path)}
+              onContextMenu={(event) => onDirectoryContextMenu(event, entry.path, entry.name)}
               onDragOver={(event) => handleDirectoryDragOver(event, entry.path)}
               onDragEnter={(event) => handleDirectoryDragOver(event, entry.path)}
               onDragLeave={(event) => {
@@ -614,6 +735,7 @@ export const FileSidebar = ({
             "file",
             active ? "active" : "",
             draggingFilePath === entry.path ? "dragging" : "",
+            dropTargetFile?.path === entry.path ? `drop-${dropTargetFile.placement}` : "",
           ].filter(Boolean).join(" ")}
           style={{ paddingLeft: `${1.8 + depth * 0.9}rem` }}
           draggable
@@ -626,7 +748,17 @@ export const FileSidebar = ({
           onDragEnd={() => {
             setDraggingFilePath(null);
             setDropTargetDirectoryPath(null);
+            setDropTargetFile(null);
+            setRootDropTarget(false);
           }}
+          onDragOver={(event) => handleFileDragOver(event, entry.path)}
+          onDragEnter={(event) => handleFileDragOver(event, entry.path)}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setDropTargetFile((current) => (current?.path === entry.path ? null : current));
+            }
+          }}
+          onDrop={(event) => handleFileDrop(event, entry.path)}
           onClick={() => onOpenFile(entry.path)}
           onContextMenu={(event) => onFileContextMenu(event, entry.path, getEditableBaseName(entry.name))}
         >
@@ -637,7 +769,26 @@ export const FileSidebar = ({
     });
 
   return (
-    <section className="sidebar-panel file-sidebar-panel">
+    <section
+      className="sidebar-panel file-sidebar-panel"
+      onDragOver={handleRootDragOver}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setRootDropTarget(false);
+        }
+      }}
+      onDrop={handleRootDrop}
+      onContextMenu={(event) => {
+        const target = event.target;
+        if (
+          target instanceof Element &&
+          (target.closest(".file-tree-row") || target.closest(".sidebar-panel-header"))
+        ) {
+          return;
+        }
+        onBlankContextMenu(event);
+      }}
+    >
       <div className="sidebar-panel-header">
         <div>
           <span>文件</span>
@@ -650,7 +801,17 @@ export const FileSidebar = ({
       {!loading && !errorMessage && entries.length === 0 ? (
         <div className="sidebar-panel-hint">默认目录还是空的。先保存一个文档进来，后面就能做文件关系和网络图了。</div>
       ) : null}
-      {!loading && !errorMessage ? <div className="file-tree">{renderEntries(entries)}</div> : null}
+      {!loading && !errorMessage ? (
+        <div
+          className={rootDropTarget ? "file-tree root-drop-target" : "file-tree"}
+          onContextMenu={(event) => onBlankContextMenu(event)}
+          onDragOver={handleRootDragOver}
+          onDrop={handleRootDrop}
+        >
+          {renderEntries(entries)}
+          {draggingFilePath ? <div className="file-tree-root-drop-hint">拖到这里移出文件夹</div> : null}
+        </div>
+      ) : null}
     </section>
   );
 };

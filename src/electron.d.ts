@@ -88,12 +88,26 @@ declare global {
         filePath: string;
         targetDirectoryPath: string;
       }) => Promise<string>;
+      deleteDocumentAtPath: (options: {
+        filePath: string;
+      }) => Promise<void>;
       saveDocumentToPath: (options: {
         content: string;
         defaultFileName: string;
         filePath?: string | null;
         forcePrompt?: boolean;
       }) => Promise<string | null>;
+      createWorkspaceDirectory: (options: {
+        parentDirectoryPath?: string | null;
+        name: string;
+      }) => Promise<string>;
+      renameWorkspaceDirectory: (options: {
+        directoryPath: string;
+        name: string;
+      }) => Promise<string>;
+      deleteWorkspaceDirectory: (options: {
+        directoryPath: string;
+      }) => Promise<void>;
       listWorkspaceEntries: () => Promise<{
         rootPath: string;
         entries: WorkspaceEntry[];

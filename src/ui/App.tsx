@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import packageInfo from "../../package.json";
 import { openFileWithPicker, setActiveFileHandle } from "../file/fileHandle";
 import { loadDocumentFromFile, loadDocumentFromRaw } from "../file/loadDocument";
 import { saveDocumentToDisk } from "../file/saveDocument";
@@ -29,6 +30,8 @@ import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
 import { FileSidebar, WorkspaceGraphPanel, getDisplayFileName } from "./FileSidebar";
 import { Toolbar } from "./Toolbar";
+
+const APP_VERSION = packageInfo.version;
 
 type InteractionState =
   | { type: "none" }
@@ -63,6 +66,21 @@ type SidebarContextMenuState =
       y: number;
       filePath: string;
       fileName: string;
+      parentDirectoryPath: string | null;
+    }
+  | {
+      kind: "directory";
+      x: number;
+      y: number;
+      directoryPath: string;
+      directoryName: string;
+      parentDirectoryPath: string | null;
+    }
+  | {
+      kind: "workspace";
+      x: number;
+      y: number;
+      directoryPath: string | null;
     }
   | {
       kind: "page";
@@ -84,6 +102,7 @@ const PAGE_STATE_STORAGE_KEY = "icanvas.page-state";
 const FILE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.file-sidebar.collapsed";
 const PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.page-sidebar.collapsed";
 const GRAPH_SIDEBAR_WIDTH_STORAGE_KEY = "icanvas.graph-sidebar.width";
+const FILE_TREE_ORDER_STORAGE_KEY = "icanvas.file-tree.order";
 const GRAPH_SIDEBAR_DEFAULT_WIDTH = 360;
 const GRAPH_SIDEBAR_MIN_WIDTH = 280;
 const GRAPH_SIDEBAR_MAX_WIDTH = 760;
@@ -253,6 +272,73 @@ const getWorkspaceRelativePath = (filePath: string, rootPath: string | null) => 
   }
 
   return filePath.slice(rootPath.length).replace(/^[\\/]+/, "");
+};
+
+const getParentDirectoryPath = (entryPath: string, rootPath: string | null) => {
+  const separatorIndex = Math.max(entryPath.lastIndexOf("/"), entryPath.lastIndexOf("\\"));
+  if (separatorIndex <= 0) {
+    return rootPath;
+  }
+
+  return entryPath.slice(0, separatorIndex);
+};
+
+const isPathInsideOrEqual = (parentPath: string, candidatePath: string) => {
+  const normalizedParent = parentPath.replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalizedCandidate = candidatePath.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}/`);
+};
+
+const readStoredFileTreeOrder = (): Record<string, string[]> => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FILE_TREE_ORDER_STORAGE_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, unknown[]] => typeof entry[0] === "string" && Array.isArray(entry[1]))
+        .map(([key, value]) => [key, value.filter((item): item is string => typeof item === "string")]),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const orderWorkspaceEntries = (
+  entries: WorkspaceEntry[],
+  orderByDirectory: Record<string, string[]>,
+  parentDirectoryPath: string | null,
+): WorkspaceEntry[] => {
+  const order = orderByDirectory[parentDirectoryPath ?? ""] ?? [];
+  const orderIndex = new Map(order.map((path, index) => [path, index]));
+
+  return entries
+    .map((entry) => entry.type === "directory"
+      ? { ...entry, children: orderWorkspaceEntries(entry.children, orderByDirectory, entry.path) }
+      : entry)
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      if (left.entry.type !== right.entry.type) {
+        return left.entry.type === "directory" ? -1 : 1;
+      }
+
+      if (left.entry.type === "file" && right.entry.type === "file") {
+        const leftIndex = orderIndex.get(left.entry.path);
+        const rightIndex = orderIndex.get(right.entry.path);
+        if (leftIndex !== undefined || rightIndex !== undefined) {
+          return (leftIndex ?? Number.MAX_SAFE_INTEGER) - (rightIndex ?? Number.MAX_SAFE_INTEGER);
+        }
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ entry }) => entry);
 };
 
 const readStoredPageState = () => {
@@ -494,6 +580,7 @@ export const App = () => {
   const [workspaceDocumentSummaries, setWorkspaceDocumentSummaries] = useState<WorkspaceDocumentSummary[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [fileTreeOrder, setFileTreeOrder] = useState(readStoredFileTreeOrder);
   const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(readStoredFileSidebarCollapsed);
   const [pageSidebarCollapsed, setPageSidebarCollapsed] = useState(readStoredPageSidebarCollapsed);
   const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>("files");
@@ -503,6 +590,8 @@ export const App = () => {
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
   const [renamingFileName, setRenamingFileName] = useState("");
+  const [renamingDirectoryPath, setRenamingDirectoryPath] = useState<string | null>(null);
+  const [renamingDirectoryName, setRenamingDirectoryName] = useState("");
   const [renamingPageIndex, setRenamingPageIndex] = useState<number | null>(null);
   const [renamingPageTitle, setRenamingPageTitle] = useState("");
   const [managedAssetUrls, setManagedAssetUrls] = useState<Record<string, string>>({});
@@ -577,6 +666,10 @@ export const App = () => {
     return [...withoutCurrent, currentWorkspaceDocumentSummary]
       .sort((left, right) => left.relativePath.localeCompare(right.relativePath, "zh-CN"));
   }, [currentWorkspaceDocumentSummary, workspaceDocumentSummaries]);
+  const orderedWorkspaceEntries = useMemo(
+    () => orderWorkspaceEntries(workspaceEntries, fileTreeOrder, workspaceRootPath),
+    [fileTreeOrder, workspaceEntries, workspaceRootPath],
+  );
 
   useEffect(() => {
     refreshWorkspaceEntries().catch(() => {});
@@ -642,6 +735,14 @@ export const App = () => {
 
     window.localStorage.setItem(GRAPH_SIDEBAR_WIDTH_STORAGE_KEY, String(graphSidebarWidth));
   }, [graphSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(FILE_TREE_ORDER_STORAGE_KEY, JSON.stringify(fileTreeOrder));
+  }, [fileTreeOrder]);
 
   const syncEditorStateToDocument = (nextDocument: DocumentFile) => {
     const nextNodeIds = new Set(nextDocument.nodes.map((node) => node.id));
@@ -1501,6 +1602,8 @@ export const App = () => {
   };
 
   const handleBeginRenameWorkspaceFile = (filePath: string, currentName: string) => {
+    setRenamingDirectoryPath(null);
+    setRenamingDirectoryName("");
     setRenamingFilePath(filePath);
     setRenamingFileName(currentName);
   };
@@ -1534,6 +1637,11 @@ export const App = () => {
         setCurrentSavePath(nextPath);
       }
 
+      const directoryPath = getParentDirectoryPath(renamingFilePath, workspaceRootPath) ?? "";
+      setFileTreeOrder((current) => ({
+        ...current,
+        [directoryPath]: (current[directoryPath] ?? []).map((path) => (path === renamingFilePath ? nextPath : path)),
+      }));
       setRenamingFilePath(null);
       setRenamingFileName("");
       refreshWorkspaceEntries().catch(() => {});
@@ -1547,10 +1655,95 @@ export const App = () => {
     setRenamingFileName("");
   };
 
+  const handleBeginRenameWorkspaceDirectory = (directoryPath: string, currentName: string) => {
+    setRenamingFilePath(null);
+    setRenamingFileName("");
+    setRenamingDirectoryPath(directoryPath);
+    setRenamingDirectoryName(currentName);
+  };
+
+  const handleCommitWorkspaceDirectoryRename = async () => {
+    if (!renamingDirectoryPath) {
+      return;
+    }
+
+    if (!window.electronApp?.renameWorkspaceDirectory) {
+      setErrorMessage("重命名文件夹需要重启桌面版以加载最新文件操作能力。");
+      setRenamingDirectoryPath(null);
+      setRenamingDirectoryName("");
+      return;
+    }
+
+    const directoryPath = renamingDirectoryPath;
+    const name = renamingDirectoryName.trim();
+    if (!name) {
+      setRenamingDirectoryPath(null);
+      setRenamingDirectoryName("");
+      return;
+    }
+
+    try {
+      const nextPath = await window.electronApp.renameWorkspaceDirectory({
+        directoryPath,
+        name,
+      });
+      setExpandedDirectories((current) => current.map((item) =>
+        isPathInsideOrEqual(directoryPath, item)
+          ? item.replace(directoryPath, nextPath)
+          : item));
+      setFileTreeOrder((current) => Object.fromEntries(
+        Object.entries(current).map(([key, value]) => [
+          isPathInsideOrEqual(directoryPath, key) ? key.replace(directoryPath, nextPath) : key,
+          value.map((path) => (isPathInsideOrEqual(directoryPath, path) ? path.replace(directoryPath, nextPath) : path)),
+        ]),
+      ));
+      if (currentSavePath && isPathInsideOrEqual(directoryPath, currentSavePath)) {
+        setCurrentSavePath(currentSavePath.replace(directoryPath, nextPath));
+      }
+      setRenamingDirectoryPath(null);
+      setRenamingDirectoryName("");
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "重命名文件夹失败。");
+    }
+  };
+
+  const handleCancelWorkspaceDirectoryRename = () => {
+    setRenamingDirectoryPath(null);
+    setRenamingDirectoryName("");
+  };
+
+  const rememberFileOrderPlacement = (
+    filePath: string,
+    targetFilePath: string,
+    placement: "before" | "after",
+  ) => {
+    const targetDirectoryPath = getParentDirectoryPath(targetFilePath, workspaceRootPath);
+    const sourceDirectoryPath = getParentDirectoryPath(filePath, workspaceRootPath);
+    const directoryKey = targetDirectoryPath ?? "";
+    const sourceKey = sourceDirectoryPath ?? "";
+
+    setFileTreeOrder((current) => {
+      const currentOrder = current[directoryKey] ?? [];
+      const orderWithTarget = currentOrder.includes(targetFilePath) ? currentOrder : [...currentOrder, targetFilePath];
+      const targetIndex = orderWithTarget.filter((path) => path !== filePath).indexOf(targetFilePath);
+      const nextOrder = orderWithTarget.filter((path) => path !== filePath && path !== targetFilePath);
+      nextOrder.splice(Math.max(0, targetIndex), 0, targetFilePath);
+      const insertIndex = placement === "before" ? targetIndex : targetIndex + 1;
+      nextOrder.splice(Math.max(0, insertIndex), 0, filePath);
+
+      return {
+        ...current,
+        ...(sourceKey !== directoryKey ? { [sourceKey]: (current[sourceKey] ?? []).filter((path) => path !== filePath) } : {}),
+        [directoryKey]: nextOrder,
+      };
+    });
+  };
+
   const handleMoveWorkspaceFileToDirectory = async (filePath: string, targetDirectoryPath: string) => {
     if (!window.electronApp?.moveDocumentToDirectory) {
       window.alert("移动文件需要在桌面版中使用。");
-      return;
+      return null;
     }
 
     try {
@@ -1564,9 +1757,136 @@ export const App = () => {
       }
 
       setExpandedDirectories((current) => Array.from(new Set([...current, targetDirectoryPath])));
+      const sourceDirectoryPath = getParentDirectoryPath(filePath, workspaceRootPath);
+      if (sourceDirectoryPath !== targetDirectoryPath || nextPath !== filePath) {
+        setFileTreeOrder((current) => ({
+          ...current,
+          [sourceDirectoryPath ?? ""]: (current[sourceDirectoryPath ?? ""] ?? []).filter((path) => path !== filePath),
+          [targetDirectoryPath]: [
+            ...(current[targetDirectoryPath] ?? []).filter((path) => path !== filePath && path !== nextPath),
+            nextPath,
+          ],
+        }));
+      }
       refreshWorkspaceEntries().catch(() => {});
+      return nextPath;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "移动文件失败。");
+      return null;
+    }
+  };
+
+  const handleReorderWorkspaceFile = async (
+    filePath: string,
+    targetFilePath: string,
+    placement: "before" | "after",
+  ) => {
+    if (filePath === targetFilePath) {
+      return;
+    }
+
+    const sourceDirectoryPath = getParentDirectoryPath(filePath, workspaceRootPath);
+    const targetDirectoryPath = getParentDirectoryPath(targetFilePath, workspaceRootPath);
+
+    if (sourceDirectoryPath !== targetDirectoryPath && targetDirectoryPath) {
+      const movedPath = await handleMoveWorkspaceFileToDirectory(filePath, targetDirectoryPath);
+      if (!movedPath) {
+        return;
+      }
+      rememberFileOrderPlacement(movedPath, targetFilePath, placement);
+      refreshWorkspaceEntries().catch(() => {});
+      return;
+    }
+
+    rememberFileOrderPlacement(filePath, targetFilePath, placement);
+  };
+
+  const handleCreateWorkspaceDirectory = async (parentDirectoryPath: string | null) => {
+    if (!window.electronApp?.createWorkspaceDirectory) {
+      setErrorMessage("新建文件夹需要重启桌面版以加载最新文件操作能力。");
+      return;
+    }
+
+    try {
+      const nextPath = await window.electronApp.createWorkspaceDirectory({
+        parentDirectoryPath,
+        name: "新建文件夹",
+      });
+      setExpandedDirectories((current) => Array.from(new Set([
+        ...current,
+        ...(parentDirectoryPath ? [parentDirectoryPath] : []),
+        nextPath,
+      ])));
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "新建文件夹失败。");
+    }
+  };
+
+  const handleRenameWorkspaceDirectory = async (directoryPath: string, currentName: string) => {
+    if (!window.electronApp?.renameWorkspaceDirectory) {
+      setErrorMessage("重命名文件夹需要在桌面版中使用。");
+      return;
+    }
+    handleBeginRenameWorkspaceDirectory(directoryPath, currentName);
+  };
+
+  const handleDeleteWorkspaceFile = async (filePath: string) => {
+    if (!window.electronApp?.deleteDocumentAtPath) {
+      window.alert("删除文件需要在桌面版中使用。");
+      return;
+    }
+
+    if (!window.confirm("确定删除这个文件吗？")) {
+      return;
+    }
+
+    try {
+      await window.electronApp.deleteDocumentAtPath({ filePath });
+      const directoryPath = getParentDirectoryPath(filePath, workspaceRootPath) ?? "";
+      setFileTreeOrder((current) => ({
+        ...current,
+        [directoryPath]: (current[directoryPath] ?? []).filter((path) => path !== filePath),
+      }));
+      if (currentSavePath === filePath) {
+        setCurrentSavePath(null);
+        fileHandleRef.current = null;
+        setActiveFileHandle(null);
+        setIsDirty(true);
+      }
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除文件失败。");
+    }
+  };
+
+  const handleDeleteWorkspaceDirectory = async (directoryPath: string) => {
+    if (!window.electronApp?.deleteWorkspaceDirectory) {
+      window.alert("删除文件夹需要在桌面版中使用。");
+      return;
+    }
+
+    if (!window.confirm("确定删除这个文件夹及其中所有内容吗？")) {
+      return;
+    }
+
+    try {
+      await window.electronApp.deleteWorkspaceDirectory({ directoryPath });
+      setExpandedDirectories((current) => current.filter((item) => !isPathInsideOrEqual(directoryPath, item)));
+      setFileTreeOrder((current) => Object.fromEntries(
+        Object.entries(current)
+          .filter(([key]) => !isPathInsideOrEqual(directoryPath, key))
+          .map(([key, value]) => [key, value.filter((path) => !isPathInsideOrEqual(directoryPath, path))]),
+      ));
+      if (currentSavePath && isPathInsideOrEqual(directoryPath, currentSavePath)) {
+        setCurrentSavePath(null);
+        fileHandleRef.current = null;
+        setActiveFileHandle(null);
+        setIsDirty(true);
+      }
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除文件夹失败。");
     }
   };
 
@@ -1603,6 +1923,35 @@ export const App = () => {
       y: event.clientY,
       filePath,
       fileName: currentName,
+      parentDirectoryPath: getParentDirectoryPath(filePath, workspaceRootPath),
+    });
+  };
+
+  const handleDirectoryContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    directoryPath: string,
+    currentName: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSidebarContextMenu({
+      kind: "directory",
+      x: event.clientX,
+      y: event.clientY,
+      directoryPath,
+      directoryName: currentName,
+      parentDirectoryPath: getParentDirectoryPath(directoryPath, workspaceRootPath),
+    });
+  };
+
+  const handleWorkspaceBlankContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSidebarContextMenu({
+      kind: "workspace",
+      x: event.clientX,
+      y: event.clientY,
+      directoryPath: workspaceRootPath,
     });
   };
 
@@ -2513,6 +2862,7 @@ export const App = () => {
       <div className="app-titlebar">
         <div className="app-titlebar-drag-region">
           <span>Infinite Canvas</span>
+          <span className="app-version">v{APP_VERSION}</span>
         </div>
         <div className="window-controls">
           <button
@@ -2668,6 +3018,99 @@ export const App = () => {
               >
                 重命名
               </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  const parentDirectoryPath = sidebarContextMenu.parentDirectoryPath;
+                  setSidebarContextMenu(null);
+                  handleCreateWorkspaceDirectory(parentDirectoryPath);
+                }}
+              >
+                在此处新建文件夹
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item danger"
+                onClick={() => {
+                  const filePath = sidebarContextMenu.filePath;
+                  setSidebarContextMenu(null);
+                  handleDeleteWorkspaceFile(filePath).catch(() => {});
+                }}
+              >
+                删除文件
+              </button>
+            </>
+          ) : sidebarContextMenu.kind === "directory" ? (
+            <>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  const directoryPath = sidebarContextMenu.directoryPath;
+                  setSidebarContextMenu(null);
+                  handleToggleDirectory(directoryPath);
+                }}
+              >
+                展开/折叠
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  const directoryPath = sidebarContextMenu.directoryPath;
+                  setSidebarContextMenu(null);
+                  handleCreateWorkspaceDirectory(directoryPath);
+                }}
+              >
+                新建子文件夹
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  const { directoryPath, directoryName } = sidebarContextMenu;
+                  setSidebarContextMenu(null);
+                  handleRenameWorkspaceDirectory(directoryPath, directoryName).catch(() => {});
+                }}
+              >
+                重命名文件夹
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item danger"
+                onClick={() => {
+                  const directoryPath = sidebarContextMenu.directoryPath;
+                  setSidebarContextMenu(null);
+                  handleDeleteWorkspaceDirectory(directoryPath).catch(() => {});
+                }}
+              >
+                删除文件夹
+              </button>
+            </>
+          ) : sidebarContextMenu.kind === "workspace" ? (
+            <>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  const directoryPath = sidebarContextMenu.directoryPath;
+                  setSidebarContextMenu(null);
+                  handleCreateWorkspaceDirectory(directoryPath);
+                }}
+              >
+                新建文件夹
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  refreshWorkspaceEntries().catch(() => {});
+                }}
+              >
+                刷新
+              </button>
             </>
           ) : (
             <>
@@ -2781,7 +3224,7 @@ export const App = () => {
         >
           {!fileSidebarCollapsed && leftSidebarMode === "files" ? (
             <FileSidebar
-              entries={workspaceEntries}
+              entries={orderedWorkspaceEntries}
               rootPath={workspaceRootPath}
               currentFilePath={currentSavePath}
               expandedDirectories={expandedDirectories}
@@ -2790,12 +3233,20 @@ export const App = () => {
               onToggleDirectory={handleToggleDirectory}
               onOpenFile={handleOpenWorkspaceFile}
               onMoveFileToDirectory={handleMoveWorkspaceFileToDirectory}
+              onReorderFile={handleReorderWorkspaceFile}
               onFileContextMenu={handleFileContextMenu}
+              onDirectoryContextMenu={handleDirectoryContextMenu}
+              onBlankContextMenu={handleWorkspaceBlankContextMenu}
               renamingFilePath={renamingFilePath}
               renamingFileName={renamingFileName}
               onRenamingFileNameChange={setRenamingFileName}
               onCommitFileRename={handleCommitWorkspaceFileRename}
               onCancelFileRename={handleCancelWorkspaceFileRename}
+              renamingDirectoryPath={renamingDirectoryPath}
+              renamingDirectoryName={renamingDirectoryName}
+              onRenamingDirectoryNameChange={setRenamingDirectoryName}
+              onCommitDirectoryRename={handleCommitWorkspaceDirectoryRename}
+              onCancelDirectoryRename={handleCancelWorkspaceDirectoryRename}
               onRefresh={() => {
                 refreshWorkspaceEntries().catch(() => {});
               }}

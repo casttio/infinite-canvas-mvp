@@ -202,6 +202,12 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic" | "under
     if (tagName === "blockquote" && !nextMarks.includes("italic")) {
       nextMarks.push("italic");
     }
+    if ((current.style.fontWeight === "bold" || Number.parseInt(current.style.fontWeight, 10) >= 600) && !nextMarks.includes("bold")) {
+      nextMarks.push("bold");
+    }
+    if ((current.style.fontStyle === "italic" || current.style.fontStyle === "oblique") && !nextMarks.includes("italic")) {
+      nextMarks.push("italic");
+    }
     if (tagName === "u" && !nextMarks.includes("underline")) {
       nextMarks.push("underline");
     }
