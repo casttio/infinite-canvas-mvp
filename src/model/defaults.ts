@@ -1,10 +1,14 @@
 import type {
   CanvasNode,
+  ConnectorLineStyle,
+  ConnectorMarker,
+  ConnectorNode,
   DocumentAppearance,
   DocumentFile,
   ImageNode,
   PageBounds,
   RichTextDoc,
+  ShapeNode,
   TextNode,
 } from "./types";
 
@@ -19,7 +23,7 @@ const randomId = (prefix: string) => {
 };
 
 export const createDocumentId = () => randomId("doc");
-export const createNodeId = (type: "text" | "image") => randomId(`node_${type}`);
+export const createNodeId = (type: "text" | "image" | "shape" | "connector") => randomId(`node_${type}`);
 export const createAssetId = () => randomId("asset");
 
 export const createDefaultRichTextDoc = (text = "双击编辑文本"): RichTextDoc => ({
@@ -55,7 +59,7 @@ export const createDefaultDocumentAppearance = (): DocumentAppearance => ({
 });
 
 export const derivePageBoundsFromNodes = (
-  nodes: Array<Pick<CanvasNode, "x" | "y" | "w" | "h">>,
+  nodes: Array<CanvasNode | { x: number; y: number; w: number; h: number }>,
   margin = 240,
 ): PageBounds => {
   const fallback = createDefaultPageBounds();
@@ -68,6 +72,12 @@ export const derivePageBoundsFromNodes = (
   let maxY = Number.NEGATIVE_INFINITY;
 
   nodes.forEach((node) => {
+    if ("type" in node && node.type === "connector") {
+      maxX = Math.max(maxX, node.x1 + margin, node.x2 + margin);
+      maxY = Math.max(maxY, node.y1 + margin, node.y2 + margin);
+      return;
+    }
+
     maxX = Math.max(maxX, node.x + node.w + margin);
     maxY = Math.max(maxY, node.y + node.h + margin);
   });
@@ -84,7 +94,7 @@ export const derivePageBoundsFromNodes = (
 };
 
 export const fitPageBoundsToNodes = (
-  nodes: Array<Pick<CanvasNode, "x" | "y" | "w" | "h">>,
+  nodes: CanvasNode[],
   margin = 240,
 ): PageBounds => {
   return derivePageBoundsFromNodes(nodes, margin);
@@ -144,6 +154,58 @@ export const createImageNode = (
   h: height,
   z: 1,
   assetId,
+  style: {},
+});
+
+export const createShapeNode = (
+  x: number,
+  y: number,
+  shapeType: ShapeNode["shapeType"] = "rect",
+): ShapeNode => ({
+  id: createNodeId("shape"),
+  type: "shape",
+  pageIndex: 0,
+  x,
+  y,
+  w: 240,
+  h: 160,
+  z: 1,
+  shapeType,
+  fill: shapeType === "ellipse" ? "#fef3c7" : "#dbeafe",
+  stroke: "#1d4ed8",
+  strokeWidth: 2,
+  borderRadius: shapeType === "rect" ? 12 : undefined,
+  style: {},
+});
+
+export const createConnectorNode = (
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  options: Partial<Pick<
+    ConnectorNode,
+    "startNodeId" | "startAnchor" | "endNodeId" | "endAnchor" | "pageIndex" | "stroke" | "strokeWidth" | "lineStyle" | "startMarker" | "endMarker" | "label"
+  >> = {},
+): ConnectorNode => ({
+  id: createNodeId("connector"),
+  type: "connector",
+  pageIndex: options.pageIndex ?? 0,
+  z: 1,
+  x1,
+  y1,
+  x2,
+  y2,
+  ...(options.startNodeId ? { startNodeId: options.startNodeId } : {}),
+  ...(options.startAnchor ? { startAnchor: options.startAnchor } : {}),
+  ...(options.endNodeId ? { endNodeId: options.endNodeId } : {}),
+  ...(options.endAnchor ? { endAnchor: options.endAnchor } : {}),
+  stroke: options.stroke ?? "#2563eb",
+  strokeWidth: options.strokeWidth ?? 2,
+  lineStyle: (options.lineStyle ?? "solid") as ConnectorLineStyle,
+  startMarker: (options.startMarker ?? "none") as ConnectorMarker,
+  endMarker: (options.endMarker ?? "arrow") as ConnectorMarker,
+  ...(options.label ? { label: options.label } : {}),
   style: {},
 });
 

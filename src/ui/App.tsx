@@ -17,17 +17,26 @@ import {
 } from "../editor/viewport";
 import {
   createAssetId,
+  createDefaultRichTextDoc,
   createEmptyDocument,
+  createConnectorNode,
   createImageNode,
+  createShapeNode,
   createTextNode,
   fitPageBoundsToNodes,
   touchDocument,
 } from "../model/defaults";
 import { addImageNodeToDocument, addNodeToDocument, updateNodeInDocument } from "../model/documentOps";
-import type { CanvasNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, RichTextInline, TextNode as TextNodeModel, ViewState } from "../model/types";
+import type { BoxCanvasNode, CanvasNode, ConnectorAnchor, ConnectorNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, RichTextInline, ShapeNode as ShapeNodeModel, TextNode as TextNodeModel, ViewState } from "../model/types";
+import { ConnectorLayer } from "../nodes/ConnectorLayer";
+import { distanceToSegment, isBoxCanvasNode, nearestAnchor, resolveAnchorPoint, resolveConnectorEndpoint } from "../nodes/connectorGeometry";
 import { ImageNode } from "../nodes/ImageNode";
+import { ShapeNode } from "../nodes/ShapeNode";
 import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
+import { generateTimelineHtml, getTimelineSize } from "../timeline/generateTimeline";
+import { parseTableToTimelineRows } from "../timeline/parseTable";
+import { parseMarkdownToRichTextDoc } from "../markdown/parseMarkdown";
 import { FileSidebar, WorkspaceGraphPanel, getDisplayFileName } from "./FileSidebar";
 import { Toolbar } from "./Toolbar";
 
@@ -48,7 +57,7 @@ type InteractionState =
   | {
       type: "resize-node";
       nodeId: string;
-      nodeType: CanvasNode["type"];
+      nodeType: BoxCanvasNode["type"];
       startPointerX: number;
       startPointerY: number;
       startX: number;
@@ -56,7 +65,10 @@ type InteractionState =
       startH: number;
       handle: ResizeHandle;
       allowOverlap: boolean;
-    };
+    }
+  | { type: "draw-connector"; startX: number; startY: number; currentX: number; currentY: number; startNodeId?: string; startAnchor?: ConnectorAnchor }
+  | { type: "drag-connector"; connectorId: string; startPointerX: number; startPointerY: number; startX1: number; startY1: number; startX2: number; startY2: number }
+  | { type: "drag-connector-endpoint"; connectorId: string; endpoint: "start" | "end"; startPointerX: number; startPointerY: number; startX: number; startY: number };
 
 type SidebarContextMenuState =
   | null
@@ -88,6 +100,19 @@ type SidebarContextMenuState =
       y: number;
       pageIndex: number;
     };
+
+type CanvasContextMenuState = null | {
+  x: number;
+  y: number;
+  worldX: number;
+  worldY: number;
+};
+
+type MarkdownDialogState = null | {
+  worldX: number;
+  worldY: number;
+  text: string;
+};
 
 type LeftSidebarMode = "files" | "graph";
 
@@ -204,6 +229,9 @@ const canDiscardUnsavedChanges = (isDirty: boolean) =>
 
 const isCanvasNodeTarget = (target: EventTarget) =>
   target instanceof Element && !!target.closest(".canvas-node");
+
+const getCanvasNodeIdFromTarget = (target: EventTarget | null) =>
+  target instanceof Element ? target.closest(".canvas-node")?.getAttribute("data-node-id") ?? null : null;
 
 const normalizeRect = (rect: { startX: number; startY: number; currentX: number; currentY: number }) => ({
   x: Math.min(rect.startX, rect.currentX),
@@ -566,6 +594,7 @@ export const App = () => {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [interaction, setInteraction] = useState<InteractionState>({ type: "none" });
+  const [connectorMode, setConnectorMode] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [editorCommand, setEditorCommand] = useState<TextEditorCommand | null>(null);
@@ -588,6 +617,8 @@ export const App = () => {
   const [graphSidebarResizing, setGraphSidebarResizing] = useState(false);
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
+  const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState>(null);
+  const [markdownDialog, setMarkdownDialog] = useState<MarkdownDialogState>(null);
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
   const [renamingFileName, setRenamingFileName] = useState("");
   const [renamingDirectoryPath, setRenamingDirectoryPath] = useState<string | null>(null);
@@ -618,14 +649,23 @@ export const App = () => {
       ? documentFile.nodes.find((node): node is TextNodeModel => node.id === selectedNodeIds[0] && node.type === "text")
       : undefined
   );
+  const selectedConnector = (
+    selectedNodeIds.length === 1
+      ? documentFile.nodes.find((node): node is ConnectorNode => node.id === selectedNodeIds[0] && node.type === "connector")
+      : undefined
+  );
   const hasSelectedTextNodes = selectedNodeIds.some((nodeId) =>
     documentFile.nodes.some((node) => node.id === nodeId && node.type === "text"),
   );
+  const selectedTextNodeHasTable = selectedTextNode?.content.content.some((block) => block.type === "table") ?? false;
   const pageCount = Math.max(documentFile.appearance.pages.count, inferRequiredPageCount(documentFile));
   const visiblePageNodes = documentFile.nodes
     .filter((node) => node.pageIndex === activePageIndex)
     .sort((left, right) => left.z - right.z);
+  const visiblePageBoxNodes = visiblePageNodes.filter(isBoxCanvasNode);
+  const visiblePageConnectors = visiblePageNodes.filter((node): node is ConnectorNode => node.type === "connector");
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
+  const currentUpdatedAt = formatUpdatedAt(documentFile.meta.updatedAt);
   const currentFileName = currentSavePath?.split(/[\\/]/).pop() ?? fileHandleRef.current?.name ?? fileNameFromMeta(documentFile);
   const currentDisplayFileName = getDisplayFileName(currentFileName);
   const pageSummaries = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
@@ -682,20 +722,22 @@ export const App = () => {
   }, [currentSavePath, workspaceRootPath]);
 
   useEffect(() => {
-    if (!sidebarContextMenu) {
+    if (!sidebarContextMenu && !canvasContextMenu) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest(".sidebar-context-menu")) {
+      if (target instanceof Element && target.closest(".context-menu")) {
         return;
       }
       setSidebarContextMenu(null);
+      setCanvasContextMenu(null);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setSidebarContextMenu(null);
+        setCanvasContextMenu(null);
       }
     };
 
@@ -706,7 +748,7 @@ export const App = () => {
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [sidebarContextMenu]);
+  }, [sidebarContextMenu, canvasContextMenu]);
 
   useEffect(() => {
     setStoredPageIndex(documentFile.meta.id, activePageIndex, currentSavePath);
@@ -981,6 +1023,39 @@ export const App = () => {
     options?: { avoidVerticalOverlap?: boolean },
   ) => {
     patchDocument((current) => updateNodeInDocument(current, nodeId, updater, options), markDirty);
+  };
+
+  const getNodeById = (nodeId: string | null | undefined, nodes: CanvasNode[] = documentFile.nodes) => {
+    const node = nodeId ? nodes.find((candidate) => candidate.id === nodeId) : undefined;
+    return node && isBoxCanvasNode(node) ? node : undefined;
+  };
+
+  const getNodeAtViewportPoint = (clientX: number, clientY: number, nodes: CanvasNode[] = documentFile.nodes) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    return getNodeById(getCanvasNodeIdFromTarget(element), nodes);
+  };
+
+  const findConnectorAtPoint = (point: { x: number; y: number }) => {
+    return [...visiblePageConnectors]
+      .sort((left, right) => right.z - left.z)
+      .find((connector) => {
+        const start = resolveConnectorEndpoint(connector, "start", documentFile.nodes);
+        const end = resolveConnectorEndpoint(connector, "end", documentFile.nodes);
+        return distanceToSegment(point, start, end) <= 8 / documentFile.viewState.zoom;
+      });
+  };
+
+  const getTemporaryConnector = () => {
+    if (interaction.type !== "draw-connector") {
+      return null;
+    }
+
+    return {
+      x1: interaction.startX,
+      y1: interaction.startY,
+      x2: interaction.currentX,
+      y2: interaction.currentY,
+    };
   };
 
   const updateTextNodeDraft = (
@@ -1542,6 +1617,50 @@ export const App = () => {
     setEditingNodeId(null);
   };
 
+  const handlePasteMarkdownAt = async (x: number, y: number) => {
+    let markdown = "";
+
+    try {
+      markdown = await navigator.clipboard.readText();
+    } catch {
+      markdown = "";
+    }
+
+    if (!markdown.trim()) {
+      setMarkdownDialog({ worldX: x, worldY: y, text: "" });
+      return;
+    }
+
+    addMarkdownNodeAt(x, y, markdown);
+  };
+
+  const addMarkdownNodeAt = (x: number, y: number, markdown: string) => {
+    if (!markdown.trim()) {
+      return;
+    }
+
+    const node = {
+      ...createTextNode(x, y),
+      pageIndex: activePageIndex,
+      w: 720,
+      h: 360,
+      content: parseMarkdownToRichTextDoc(markdown),
+    };
+
+    patchDocument((current) => addNodeToDocument(current, node));
+    setSelectedNodeIds([node.id]);
+    setEditingNodeId(null);
+  };
+
+  const handleSubmitMarkdownDialog = () => {
+    if (!markdownDialog) {
+      return;
+    }
+
+    addMarkdownNodeAt(markdownDialog.worldX, markdownDialog.worldY, markdownDialog.text);
+    setMarkdownDialog(null);
+  };
+
   const handleOpenFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -2085,6 +2204,79 @@ export const App = () => {
     setEditingNodeId(node.id);
   };
 
+  const handleAddShape = (shapeType: ShapeNodeModel["shapeType"]) => {
+    const node = createShapeNode(0, 0, shapeType);
+    patchDocument((current) => {
+      const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+      const offset = getInsertOffset(current.nodes.filter((item) => item.pageIndex === activePageIndex).length);
+
+      return addNodeToDocument(current, {
+        ...node,
+        pageIndex: activePageIndex,
+        x: insertionPoint.x + offset.x,
+        y: insertionPoint.y + offset.y,
+      });
+    });
+    setSelectedNodeIds([node.id]);
+    setEditingNodeId(null);
+  };
+
+  const updateSelectedConnector = (updater: (connector: ConnectorNode) => ConnectorNode) => {
+    if (!selectedConnector) {
+      return;
+    }
+
+    updateNode(selectedConnector.id, (node) => node.type === "connector" ? updater(node) : node);
+  };
+
+  const handleGenerateTimeline = () => {
+    if (!selectedTextNode) {
+      setErrorMessage("请先选中包含表格的文本块。");
+      return;
+    }
+
+    const rows = parseTableToTimelineRows(selectedTextNode);
+    if (rows.length === 0) {
+      setErrorMessage("未能从表格解析出时间线数据。请确认列包含：方向、年份、标题，DOI 可选。");
+      return;
+    }
+
+    const title = currentPageTitle.trim() || currentDisplayFileName || "时间线";
+    const assetId = createAssetId();
+    const html = generateTimelineHtml(rows, { title });
+    const size = getTimelineSize(rows);
+    const width = Math.min(980, size.width);
+    const height = Math.min(720, size.height);
+    const node = createImageNode(
+      selectedTextNode.x + selectedTextNode.w + 48,
+      selectedTextNode.y,
+      assetId,
+      width,
+      height,
+    );
+
+    patchDocument((current) => addImageNodeToDocument(
+      current,
+      {
+        ...node,
+        pageIndex: selectedTextNode.pageIndex,
+        style: {
+          kind: "timeline-preview",
+        },
+      },
+      {
+        id: assetId,
+        type: "html",
+        storage: "embedded",
+        mimeType: "text/html",
+        name: `${title}.timeline.html`,
+        data: html,
+      },
+    ));
+    setSelectedNodeIds([node.id]);
+    setEditingNodeId(null);
+  };
+
   const handleImportImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -2552,6 +2744,16 @@ export const App = () => {
         return;
       }
 
+      if (interaction.type === "draw-connector") {
+        const point = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+        setInteraction({
+          ...interaction,
+          currentX: point.x,
+          currentY: point.y,
+        });
+        return;
+      }
+
       if (interaction.type === "drag-node") {
         const delta = {
           x: (event.clientX - interaction.startPointerX) / documentFile.viewState.zoom,
@@ -2571,6 +2773,78 @@ export const App = () => {
               ...node,
               ...dragNode(startPosition, delta),
             };
+          });
+
+          return {
+            ...current,
+            nodes: nextNodes,
+            pageBounds: fitPageBoundsToNodes(nextNodes),
+          };
+        });
+        return;
+      }
+
+      if (interaction.type === "drag-connector") {
+        const delta = {
+          x: (event.clientX - interaction.startPointerX) / documentFile.viewState.zoom,
+          y: (event.clientY - interaction.startPointerY) / documentFile.viewState.zoom,
+        };
+        dragDidMoveRef.current = dragDidMoveRef.current || delta.x !== 0 || delta.y !== 0;
+        setDocumentFile((current) => {
+          const nextNodes = current.nodes.map((node) => {
+            if (node.id !== interaction.connectorId || node.type !== "connector") {
+              return node;
+            }
+
+            return {
+              ...node,
+              startNodeId: undefined,
+              startAnchor: undefined,
+              endNodeId: undefined,
+              endAnchor: undefined,
+              x1: interaction.startX1 + delta.x,
+              y1: interaction.startY1 + delta.y,
+              x2: interaction.startX2 + delta.x,
+              y2: interaction.startY2 + delta.y,
+            };
+          });
+
+          return {
+            ...current,
+            nodes: nextNodes,
+            pageBounds: fitPageBoundsToNodes(nextNodes),
+          };
+        });
+        return;
+      }
+
+      if (interaction.type === "drag-connector-endpoint") {
+        const delta = {
+          x: (event.clientX - interaction.startPointerX) / documentFile.viewState.zoom,
+          y: (event.clientY - interaction.startPointerY) / documentFile.viewState.zoom,
+        };
+        dragDidMoveRef.current = dragDidMoveRef.current || delta.x !== 0 || delta.y !== 0;
+        setDocumentFile((current) => {
+          const nextNodes = current.nodes.map((node) => {
+            if (node.id !== interaction.connectorId || node.type !== "connector") {
+              return node;
+            }
+
+            return interaction.endpoint === "start"
+              ? {
+                  ...node,
+                  startNodeId: undefined,
+                  startAnchor: undefined,
+                  x1: interaction.startX + delta.x,
+                  y1: interaction.startY + delta.y,
+                }
+              : {
+                  ...node,
+                  endNodeId: undefined,
+                  endAnchor: undefined,
+                  x2: interaction.startX + delta.x,
+                  y2: interaction.startY + delta.y,
+                };
           });
 
           return {
@@ -2615,7 +2889,7 @@ export const App = () => {
       }
     };
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (event: PointerEvent) => {
       if (interaction.type === "drag-node") {
         const didMove = dragDidMoveRef.current;
         dragDidMoveRef.current = false;
@@ -2635,11 +2909,68 @@ export const App = () => {
 
         if (movedEnough) {
           const selectedIds = documentFile.nodes
-            .filter((node) => node.pageIndex === activePageIndex && rectsIntersect(selectionRect, node))
+            .filter((node) => node.pageIndex === activePageIndex && isBoxCanvasNode(node) && rectsIntersect(selectionRect, node))
             .map((node) => node.id);
 
           setSelectedNodeIds(selectedIds);
           suppressNextCanvasClickRef.current = true;
+        }
+      }
+
+      if (interaction.type === "draw-connector") {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const pointer = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+          const endNode = getNodeAtViewportPoint(event.clientX, event.clientY);
+          const endAnchor = endNode ? nearestAnchor(endNode, pointer) : undefined;
+          const endPoint = endNode ? resolveAnchorPoint(endNode, endAnchor) : pointer;
+          const movedEnough = Math.hypot(endPoint.x - interaction.startX, endPoint.y - interaction.startY) > 4 / documentFile.viewState.zoom;
+
+          if (movedEnough) {
+            const connector = createConnectorNode(interaction.startX, interaction.startY, endPoint.x, endPoint.y, {
+              pageIndex: activePageIndex,
+              ...(interaction.startNodeId ? { startNodeId: interaction.startNodeId } : {}),
+              ...(interaction.startAnchor ? { startAnchor: interaction.startAnchor } : {}),
+              ...(endNode ? { endNodeId: endNode.id } : {}),
+              ...(endAnchor ? { endAnchor } : {}),
+            });
+            patchDocument((current) => addNodeToDocument(current, connector));
+            setSelectedNodeIds([connector.id]);
+            setConnectorMode(false);
+            suppressNextCanvasClickRef.current = true;
+          }
+        }
+      }
+
+      if (interaction.type === "drag-connector" || interaction.type === "drag-connector-endpoint") {
+        const didMove = dragDidMoveRef.current;
+        dragDidMoveRef.current = false;
+
+        if (didMove) {
+          if (interaction.type === "drag-connector-endpoint") {
+            const endNode = getNodeAtViewportPoint(event.clientX, event.clientY);
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (endNode && rect) {
+              const pointer = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+              const anchor = nearestAnchor(endNode, pointer);
+              const endpoint = resolveAnchorPoint(endNode, anchor);
+              patchDocument((current) => updateNodeInDocument(current, interaction.connectorId, (node) => {
+                if (node.type !== "connector") {
+                  return node;
+                }
+
+                return interaction.endpoint === "start"
+                  ? { ...node, x1: endpoint.x, y1: endpoint.y, startNodeId: endNode.id, startAnchor: anchor }
+                  : { ...node, x2: endpoint.x, y2: endpoint.y, endNodeId: endNode.id, endAnchor: anchor };
+              }));
+            }
+          }
+
+          suppressNextCanvasClickRef.current = true;
+          applyDocumentState((current) => settleDocumentLayout(current), {
+            recordHistory: true,
+            historyBase: transientHistoryBaseRef.current,
+          });
         }
       }
 
@@ -2697,6 +3028,11 @@ export const App = () => {
     event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation"> & { button?: number },
     node: CanvasNode,
   ) => {
+    if (connectorMode && isBoxCanvasNode(node) && event.button !== 1) {
+      startConnectorDraw(event, node);
+      return;
+    }
+
     if (event.button === 1) {
       event.stopPropagation();
       event.preventDefault();
@@ -2723,11 +3059,87 @@ export const App = () => {
       nodeIds,
       startPositions: Object.fromEntries(
         documentFile.nodes
-          .filter((item) => nodeIds.includes(item.id))
+          .filter((item) => nodeIds.includes(item.id) && isBoxCanvasNode(item))
           .map((item) => [item.id, { x: item.x, y: item.y }]),
-      ),
+      ) as Record<string, { x: number; y: number }>,
       startPointerX: event.clientX,
       startPointerY: event.clientY,
+    });
+  };
+
+  const startConnectorDraw = (
+    event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation"> & { button?: number },
+    node?: BoxCanvasNode,
+  ) => {
+    if (event.button && event.button !== 0) {
+      return;
+    }
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    event.stopPropagation();
+    event.preventDefault();
+    const pointer = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+    const anchor = node ? nearestAnchor(node, pointer) : undefined;
+    const start = node ? resolveAnchorPoint(node, anchor) : pointer;
+    transientHistoryBaseRef.current = documentFile;
+    setSelectedNodeIds([]);
+    setInteraction({
+      type: "draw-connector",
+      startX: start.x,
+      startY: start.y,
+      currentX: pointer.x,
+      currentY: pointer.y,
+      ...(node ? { startNodeId: node.id, startAnchor: anchor } : {}),
+    });
+  };
+
+  const startConnectorDrag = (
+    event: Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation">,
+    connector: ConnectorNode,
+  ) => {
+    const start = resolveConnectorEndpoint(connector, "start", documentFile.nodes);
+    const end = resolveConnectorEndpoint(connector, "end", documentFile.nodes);
+
+    event.stopPropagation();
+    event.preventDefault();
+    transientHistoryBaseRef.current = documentFile;
+    suppressNextCanvasClickRef.current = true;
+    setSelectedNodeIds([connector.id]);
+    setInteraction({
+      type: "drag-connector",
+      connectorId: connector.id,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
+      startX1: start.x,
+      startY1: start.y,
+      startX2: end.x,
+      startY2: end.y,
+    });
+  };
+
+  const startConnectorEndpointDrag = (
+    event: ReactPointerEvent<SVGCircleElement>,
+    connector: ConnectorNode,
+    endpoint: "start" | "end",
+  ) => {
+    const point = resolveConnectorEndpoint(connector, endpoint, documentFile.nodes);
+
+    event.stopPropagation();
+    event.preventDefault();
+    transientHistoryBaseRef.current = documentFile;
+    setSelectedNodeIds([connector.id]);
+    setInteraction({
+      type: "drag-connector-endpoint",
+      connectorId: connector.id,
+      endpoint,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
+      startX: point.x,
+      startY: point.y,
     });
   };
 
@@ -2736,6 +3148,9 @@ export const App = () => {
     node: CanvasNode,
     handle: ResizeHandle = "bottom-right",
   ) => {
+    if (!isBoxCanvasNode(node)) {
+      return;
+    }
     event.stopPropagation();
     event.preventDefault();
     resizeDidMoveRef.current = false;
@@ -2919,6 +3334,7 @@ export const App = () => {
           canInsertTable={editingNodeId !== null || !!selectedTextNode}
           canInsertTableColumn={editingNodeId !== null}
           canFormatText={editingNodeId !== null || hasSelectedTextNodes}
+          canGenerateTimeline={selectedTextNodeHasTable}
           onNewDocument={handleNewDocument}
           onOpenDocument={handleOpenClick}
           onSaveDocument={handleSave}
@@ -2926,9 +3342,26 @@ export const App = () => {
           onUndo={handleUndo}
           onRedo={handleRedo}
           onAddText={handleAddText}
+          onAddShape={handleAddShape}
           onAddImage={handleImageClick}
           onAddAttachment={handleAttachmentClick}
+          connectorMode={connectorMode}
+          onToggleConnectorMode={() => {
+            setConnectorMode((current) => !current);
+            setInteraction({ type: "none" });
+          }}
+          selectedConnectorStyle={selectedConnector ? {
+            stroke: selectedConnector.stroke,
+            strokeWidth: selectedConnector.strokeWidth,
+            lineStyle: selectedConnector.lineStyle,
+            endMarker: selectedConnector.endMarker,
+          } : null}
+          onSetConnectorStroke={(stroke) => updateSelectedConnector((connector) => ({ ...connector, stroke }))}
+          onSetConnectorStrokeWidth={(strokeWidth) => updateSelectedConnector((connector) => ({ ...connector, strokeWidth }))}
+          onSetConnectorLineStyle={(lineStyle) => updateSelectedConnector((connector) => ({ ...connector, lineStyle }))}
+          onSetConnectorEndMarker={(endMarker) => updateSelectedConnector((connector) => ({ ...connector, endMarker }))}
           onInsertTable={handleInsertTable}
+          onGenerateTimeline={handleGenerateTimeline}
           onInsertTableColumn={handleInsertTableColumn}
           onInsertTableColumnLeft={handleInsertTableColumnLeft}
           onDeleteTableColumn={handleDeleteTableColumn}
@@ -2987,9 +3420,64 @@ export const App = () => {
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
+      {markdownDialog ? (
+        <div className="modal-backdrop" onPointerDown={() => setMarkdownDialog(null)}>
+          <div className="markdown-dialog" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="markdown-dialog-header">
+              <strong>粘贴 Markdown</strong>
+              <button type="button" onClick={() => setMarkdownDialog(null)} aria-label="关闭">×</button>
+            </div>
+            <textarea
+              autoFocus
+              value={markdownDialog.text}
+              onChange={(event) => setMarkdownDialog((current) => current ? { ...current, text: event.currentTarget.value } : current)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  handleSubmitMarkdownDialog();
+                }
+                if (event.key === "Escape") {
+                  setMarkdownDialog(null);
+                }
+              }}
+              placeholder={"# 标题\n\n| 方向 | 年份 | 标题 | DOI |\n|---|---:|---|---|\n| AI分子表示 | 2025 | Token-Mol | 10.1038/s41467-025-59628-y |"}
+            />
+            <div className="markdown-dialog-actions">
+              <button type="button" onClick={() => setMarkdownDialog(null)}>取消</button>
+              <button type="button" className="primary" onClick={handleSubmitMarkdownDialog} disabled={!markdownDialog.text.trim()}>插入</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {canvasContextMenu ? (
+        <div
+          className="context-menu sidebar-context-menu"
+          style={{
+            left: canvasContextMenu.x,
+            top: canvasContextMenu.y,
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="sidebar-context-menu-item"
+            onClick={() => {
+              const { worldX, worldY } = canvasContextMenu;
+              setCanvasContextMenu(null);
+              handlePasteMarkdownAt(worldX, worldY).catch((error) => {
+                setErrorMessage(error instanceof Error ? error.message : "粘贴 Markdown 失败。");
+              });
+            }}
+          >
+            粘贴 Markdown
+          </button>
+        </div>
+      ) : null}
+
       {sidebarContextMenu ? (
         <div
-          className="sidebar-context-menu"
+          className="context-menu sidebar-context-menu"
           style={{
             left: sidebarContextMenu.x,
             top: sidebarContextMenu.y,
@@ -3456,7 +3944,28 @@ export const App = () => {
           const point = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
           handleDropTextAt(point.x, point.y, plainText);
         }}
+        onContextMenu={(event) => {
+          if (isCanvasNodeTarget(event.target) || isEditableTarget(event.target)) {
+            return;
+          }
+
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (!rect) {
+            return;
+          }
+
+          event.preventDefault();
+          const point = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+          setSidebarContextMenu(null);
+          setCanvasContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            worldX: point.x,
+            worldY: point.y,
+          });
+        }}
         onClick={() => {
+          setCanvasContextMenu(null);
           if (swipedPageIndex !== null) {
             setSwipedPageIndex(null);
             setSwipeOffset(0);
@@ -3492,7 +4001,6 @@ export const App = () => {
           }
 
           if (event.button === 0) {
-            setSelectedNodeIds([]);
             if (editingNodeId) {
               return;
             }
@@ -3502,6 +4010,18 @@ export const App = () => {
             }
 
             const point = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+            if (connectorMode) {
+              startConnectorDraw(event.nativeEvent);
+              return;
+            }
+
+            const connector = findConnectorAtPoint(point);
+            if (connector) {
+              startConnectorDrag(event.nativeEvent, connector);
+              return;
+            }
+
+            setSelectedNodeIds([]);
             setInteraction({
               type: "marquee",
               startX: point.x,
@@ -3559,6 +4079,22 @@ export const App = () => {
         }}
         >
           <div
+            className="canvas-floating-title"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="canvas-floating-title-main">
+              <input
+                className="canvas-header-title-input"
+                type="text"
+                value={currentPageTitle}
+                onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
+                placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
+              />
+            </div>
+            <div className="canvas-floating-title-meta">最近修改 {currentUpdatedAt}</div>
+          </div>
+          <div
             className={`canvas-grid ${zoomTransitionActive ? "zoom-transition" : ""}`}
             style={{
               "--canvas-zoom": documentFile.viewState.zoom,
@@ -3577,19 +4113,6 @@ export const App = () => {
             } as CSSProperties}
           >
             <div
-              className="canvas-page-title"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <input
-                className="canvas-header-title-input"
-                type="text"
-                value={currentPageTitle}
-                onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
-                placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
-              />
-            </div>
-            <div
               className={[
                 "page-sheet",
                 documentFile.appearance.grid.enabled ? "has-grid" : "",
@@ -3602,7 +4125,15 @@ export const App = () => {
               }}
             />
           </div>
-          {visiblePageNodes.map((node) => {
+          <ConnectorLayer
+            connectors={visiblePageConnectors}
+            nodes={documentFile.nodes}
+            pageBounds={documentFile.pageBounds}
+            selectedNodeIds={selectedNodeIds}
+            temporaryConnector={getTemporaryConnector()}
+            onEndpointPointerDown={startConnectorEndpointDrag}
+          />
+          {visiblePageBoxNodes.map((node) => {
               if (node.type === "text") {
                 return (
                   <TextNode
@@ -3663,6 +4194,24 @@ export const App = () => {
                     onDragHandlePointerDown={(event) => startNodeDrag(event, node)}
                     onMiddlePanPointerDown={startCanvasPan}
                     onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                  />
+                );
+              }
+
+              if (node.type === "shape") {
+                return (
+                  <ShapeNode
+                    key={node.id}
+                    node={node}
+                    selected={selectedNodeIds.includes(node.id)}
+                    onSelect={() => selectNode(node.id)}
+                    onPointerDown={(event) => startNodeDrag(event, node)}
+                    onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                    onLabelChange={(label) => {
+                      updateNode(node.id, (current) => current.type === "shape"
+                        ? { ...current, label: label.trim() ? createDefaultRichTextDoc(label.trim()) : undefined }
+                        : current);
+                    }}
                   />
                 );
               }

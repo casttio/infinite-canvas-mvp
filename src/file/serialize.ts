@@ -1,5 +1,6 @@
-import type { CanvasNode, DocumentFile } from "../model/types";
+import type { BoxCanvasNode, CanvasNode, ConnectorNode, DocumentFile } from "../model/types";
 import { richTextDocToHtml } from "../nodes/richText";
+import { resolveConnectorEndpoint } from "../nodes/connectorGeometry";
 
 const sortValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -35,7 +36,9 @@ const escapeScriptJson = (value: string) =>
 const pageTitle = (document: DocumentFile, pageIndex: number) =>
   document.appearance.pages.titles?.[pageIndex]?.trim() || `页面 ${pageIndex + 1}`;
 
-const nodeStyle = (document: DocumentFile, node: CanvasNode) => [
+const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector";
+
+const nodeStyle = (document: DocumentFile, node: BoxCanvasNode) => [
   `left: ${node.x - document.pageBounds.x}px;`,
   `top: ${node.y - document.pageBounds.y}px;`,
   `width: ${node.w}px;`,
@@ -70,9 +73,44 @@ const renderImageNode = (document: DocumentFile, node: Extract<CanvasNode, { typ
   return `<div class="canvas-node preview-attachment-node" style="${style}"><strong>${escapeHtml(asset.name)}</strong><span>${escapeHtml(asset.mimeType || "附件")}</span></div>`;
 };
 
+const renderShapeNode = (document: DocumentFile, node: Extract<CanvasNode, { type: "shape" }>) => {
+  const radius = node.shapeType === "ellipse" ? "50%" : `${node.borderRadius ?? 0}px`;
+  const style = [
+    nodeStyle(document, node),
+    `background: ${escapeAttribute(node.fill)};`,
+    `border: ${node.strokeWidth}px solid ${escapeAttribute(node.stroke)};`,
+    `border-radius: ${radius};`,
+  ].join(" ");
+  const label = node.label ? richTextDocToHtml(node.label, document.assets) : "";
+
+  return `<div class="canvas-node preview-shape-node" style="${style}">${label}</div>`;
+};
+
+const renderConnectorNode = (document: DocumentFile, node: ConnectorNode, nodes: CanvasNode[]) => {
+  const start = resolveConnectorEndpoint(node, "start", nodes);
+  const end = resolveConnectorEndpoint(node, "end", nodes);
+  const minX = Math.min(start.x, end.x) - document.pageBounds.x;
+  const minY = Math.min(start.y, end.y) - document.pageBounds.y;
+  const width = Math.max(1, Math.abs(end.x - start.x));
+  const height = Math.max(1, Math.abs(end.y - start.y));
+  const x1 = start.x <= end.x ? 0 : width;
+  const y1 = start.y <= end.y ? 0 : height;
+  const x2 = start.x <= end.x ? width : 0;
+  const y2 = start.y <= end.y ? height : 0;
+  const dash = node.lineStyle === "dashed" ? " stroke-dasharray=\"8 4\"" : node.lineStyle === "dotted" ? " stroke-dasharray=\"2 5\"" : "";
+
+  return `<svg class="preview-connector-node" style="left:${minX}px;top:${minY}px;width:${width}px;height:${height}px;z-index:${node.z};"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeAttribute(node.stroke)}" stroke-width="${node.strokeWidth}"${dash} /></svg>`;
+};
+
 const renderNode = (document: DocumentFile, node: CanvasNode) => {
   if (node.type === "image") {
     return renderImageNode(document, node);
+  }
+  if (node.type === "shape") {
+    return renderShapeNode(document, node);
+  }
+  if (node.type === "connector") {
+    return renderConnectorNode(document, node, document.nodes);
   }
 
   return `<div class="canvas-node preview-text-node" style="${nodeStyle(document, node)}">${richTextDocToHtml(node.content, document.assets)}</div>`;
@@ -80,7 +118,13 @@ const renderNode = (document: DocumentFile, node: CanvasNode) => {
 
 const pagePreviewHeight = (document: DocumentFile, nodes: CanvasNode[]) => {
   const maxNodeBottom = nodes.reduce(
-    (bottom, node) => Math.max(bottom, node.y - document.pageBounds.y + node.h + 80),
+    (bottom, node) => {
+      if (!isBoxNode(node)) {
+        return Math.max(bottom, node.y1 - document.pageBounds.y + 80, node.y2 - document.pageBounds.y + 80);
+      }
+
+      return Math.max(bottom, node.y - document.pageBounds.y + node.h + 80);
+    },
     0,
   );
 
@@ -96,7 +140,7 @@ const documentPreviewHtml = (document: DocumentFile) => {
   return Array.from({ length: pageCount }, (_, pageIndex) => {
     const nodes = document.nodes
       .filter((node) => node.pageIndex === pageIndex)
-      .sort((left, right) => left.z - right.z || left.y - right.y || left.x - right.x);
+      .sort((left, right) => left.z - right.z);
     const height = pagePreviewHeight(document, nodes);
     const gridClass = document.appearance.grid.enabled ? " has-grid" : "";
 
@@ -145,6 +189,9 @@ export const serializeDocument = (document: DocumentFile): string => {
     .text-block-table-cell-content .text-block { margin-bottom: 6px; }
     .text-inline-image-frame img { max-width: 100%; height: auto; vertical-align: middle; }
     .preview-image-node img, .preview-frame-node iframe { display: block; width: 100%; height: 100%; border: 0; background: white; object-fit: contain; }
+    .preview-shape-node { display: flex; align-items: center; justify-content: center; padding: 12px; color: #0f172a; }
+    .preview-shape-node p { margin: 0; }
+    .preview-connector-node { position: absolute; overflow: visible; pointer-events: none; }
     .preview-frame-node { border: 1px solid rgba(15, 23, 42, 0.14); background: white; }
     .preview-attachment-node { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 16px; border: 1px solid rgba(15, 23, 42, 0.16); background: #f8fafc; color: #475569; }
     .preview-attachment-node strong { color: #16202a; }

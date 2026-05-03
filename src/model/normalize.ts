@@ -9,6 +9,7 @@ import type {
   RichTextTable,
   RichTextTableCell,
   RichTextTableRow,
+  ShapeNode,
   TextNode,
 } from "./types";
 import { createDefaultDocumentAppearance } from "./defaults";
@@ -127,6 +128,14 @@ const normalizeNode = (node: CanvasNode, appearance: DocumentAppearance, pageBou
   const explicitPageIndex = typeof node.pageIndex === "number" && Number.isFinite(node.pageIndex)
     ? Math.max(0, Math.round(node.pageIndex))
     : null;
+  if (node.type === "connector") {
+    return {
+      ...node,
+      pageIndex: explicitPageIndex ?? 0,
+      style: node.style ?? {},
+    };
+  }
+
   const inferredPageIndex = Math.max(0, Math.floor((node.y - pageBounds.y) / step));
   const pageIndex = explicitPageIndex ?? inferredPageIndex;
   const localY = explicitPageIndex === null
@@ -138,6 +147,13 @@ const normalizeNode = (node: CanvasNode, appearance: DocumentAppearance, pageBou
     x: Math.max(pageBounds.x, node.x),
     y: Math.max(pageBounds.y, localY),
   } as CanvasNode;
+
+  if (normalizedBase.type === "shape" && (normalizedBase as ShapeNode).label) {
+    return {
+      ...normalizedBase,
+      label: normalizeRichTextDoc((normalizedBase as ShapeNode).label!),
+    };
+  }
 
   if (normalizedBase.type !== "text") {
     return normalizedBase;

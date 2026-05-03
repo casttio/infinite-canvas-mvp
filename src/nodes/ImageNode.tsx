@@ -36,6 +36,7 @@ export const ImageNode = ({
 }: ImageNodeProps) => (
   <div
     className={`canvas-node image-node ${selected ? "selected" : ""}`}
+    data-node-id={node.id}
     style={{
       transform: `translate(${node.x}px, ${node.y}px)`,
       width: node.w,

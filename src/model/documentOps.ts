@@ -1,18 +1,29 @@
-import type { Asset, CanvasNode, DocumentFile } from "./types";
+import type { Asset, BoxCanvasNode, CanvasNode, DocumentFile } from "./types";
 import { fitPageBoundsToNodes } from "./defaults";
 
 const VERTICAL_NODE_GAP = 24;
 
 const nextZ = (nodes: CanvasNode[]) => (nodes.length ? Math.max(...nodes.map((node) => node.z)) + 1 : 1);
 
-const clampNodeToPageOrigin = (node: CanvasNode, document: DocumentFile): CanvasNode => ({
-  ...node,
-  pageIndex: Math.max(0, Math.round(node.pageIndex)),
-  x: Math.max(document.pageBounds.x, node.x),
-  y: Math.max(document.pageBounds.y, node.y),
-} as CanvasNode);
+const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector";
 
-const overlapsHorizontally = (first: CanvasNode, second: CanvasNode) =>
+const clampNodeToPageOrigin = (node: CanvasNode, document: DocumentFile): CanvasNode => {
+  if (!isBoxNode(node)) {
+    return {
+      ...node,
+      pageIndex: Math.max(0, Math.round(node.pageIndex)),
+    };
+  }
+
+  return {
+    ...node,
+    pageIndex: Math.max(0, Math.round(node.pageIndex)),
+    x: Math.max(document.pageBounds.x, node.x),
+    y: Math.max(document.pageBounds.y, node.y),
+  };
+};
+
+const overlapsHorizontally = (first: BoxCanvasNode, second: BoxCanvasNode) =>
   first.x < second.x + second.w && first.x + first.w > second.x;
 
 const pushOverlappingNodesDown = (
@@ -32,13 +43,14 @@ const pushOverlappingNodesDown = (
 
     queued.delete(sourceNodeId);
     const sourceNode = nodeMap.get(sourceNodeId);
-    if (!sourceNode) {
+    if (!sourceNode || !isBoxNode(sourceNode)) {
       continue;
     }
 
     nextNodes
-      .filter((candidate) =>
-        candidate.id !== sourceNode.id
+      .filter((candidate): candidate is BoxCanvasNode =>
+        isBoxNode(candidate)
+        && candidate.id !== sourceNode.id
         && candidate.pageIndex === sourceNode.pageIndex
         && candidate.y >= sourceNode.y
         && overlapsHorizontally(sourceNode, candidate))

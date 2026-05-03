@@ -88,6 +88,38 @@ const imageNodeSchema = baseNodeSchema.extend({
   assetId: z.string(),
 }).catchall(z.unknown());
 
+const shapeNodeSchema = baseNodeSchema.extend({
+  type: z.literal("shape"),
+  shapeType: z.enum(["rect", "ellipse"]),
+  fill: z.string(),
+  stroke: z.string(),
+  strokeWidth: z.number().nonnegative(),
+  borderRadius: z.number().nonnegative().optional(),
+  label: richTextDocSchema.optional(),
+}).catchall(z.unknown());
+
+const connectorNodeSchema = z.object({
+  id: z.string(),
+  type: z.literal("connector"),
+  pageIndex: z.number().int().nonnegative().optional(),
+  z: z.number(),
+  x1: z.number(),
+  y1: z.number(),
+  x2: z.number(),
+  y2: z.number(),
+  startNodeId: z.string().optional(),
+  startAnchor: z.enum(["top", "bottom", "left", "right", "center"]).optional(),
+  endNodeId: z.string().optional(),
+  endAnchor: z.enum(["top", "bottom", "left", "right", "center"]).optional(),
+  stroke: z.string(),
+  strokeWidth: z.number().nonnegative(),
+  lineStyle: z.enum(["solid", "dashed", "dotted"]),
+  endMarker: z.enum(["none", "arrow", "circle"]),
+  startMarker: z.enum(["none", "arrow", "circle"]),
+  label: z.string().optional(),
+  style: unknownRecord,
+}).catchall(z.unknown());
+
 const assetSchema = z.object({
   id: z.string(),
   type: z.enum(["image", "html", "pdf", "file"]),
@@ -107,7 +139,7 @@ export const documentFileSchema = z.object({
     createdAt: z.string(),
     updatedAt: z.string(),
   }).catchall(z.unknown()),
-  nodes: z.array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema])),
+  nodes: z.array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema, shapeNodeSchema, connectorNodeSchema])),
   assets: z.record(z.string(), assetSchema),
   pageBounds: z.object({
     x: z.number(),

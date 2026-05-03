@@ -3648,6 +3648,7 @@ export const TextNode = ({
   return (
     <div
       className={`canvas-node text-node ${selected ? "selected" : ""} ${editing ? "editing" : ""}`}
+      data-node-id={node.id}
       style={{
         transform: `translate(${node.x}px, ${node.y}px)`,
         width: node.w,

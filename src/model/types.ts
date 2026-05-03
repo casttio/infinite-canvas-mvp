@@ -92,7 +92,7 @@ export interface RichTextDoc extends UnknownFields {
 
 export interface BaseNode extends UnknownFields {
   id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "shape";
   pageIndex: number;
   x: number;
   y: number;
@@ -112,7 +112,44 @@ export interface ImageNode extends BaseNode {
   assetId: string;
 }
 
-export type CanvasNode = TextNode | ImageNode;
+export interface ShapeNode extends BaseNode {
+  type: "shape";
+  shapeType: "rect" | "ellipse";
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  borderRadius?: number;
+  label?: RichTextDoc;
+}
+
+export type ConnectorAnchor = "top" | "bottom" | "left" | "right" | "center";
+export type ConnectorMarker = "none" | "arrow" | "circle";
+export type ConnectorLineStyle = "solid" | "dashed" | "dotted";
+
+export interface ConnectorNode extends UnknownFields {
+  id: string;
+  type: "connector";
+  pageIndex: number;
+  z: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  startNodeId?: string;
+  startAnchor?: ConnectorAnchor;
+  endNodeId?: string;
+  endAnchor?: ConnectorAnchor;
+  stroke: string;
+  strokeWidth: number;
+  lineStyle: ConnectorLineStyle;
+  endMarker: ConnectorMarker;
+  startMarker: ConnectorMarker;
+  label?: string;
+  style: Record<string, unknown>;
+}
+
+export type BoxCanvasNode = TextNode | ImageNode | ShapeNode;
+export type CanvasNode = BoxCanvasNode | ConnectorNode;
 
 export interface Asset extends UnknownFields {
   id: string;

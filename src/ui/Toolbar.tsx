@@ -12,6 +12,12 @@ const FONT_OPTIONS = [
 
 const FONT_SIZE_OPTIONS = ["11", "12", "14", "16", "18", "24", "32"];
 type ToolbarTab = "file" | "home" | "insert" | "table";
+type ConnectorStyleControls = {
+  stroke: string;
+  strokeWidth: number;
+  lineStyle: "solid" | "dashed" | "dotted";
+  endMarker: "none" | "arrow" | "circle";
+};
 const BLOCK_STYLE_STORAGE_KEY = "icanvas.block-style-presets";
 type BlockStylePreset = {
   id: string;
@@ -66,6 +72,7 @@ interface ToolbarProps {
   canInsertTable: boolean;
   canInsertTableColumn: boolean;
   canFormatText: boolean;
+  canGenerateTimeline: boolean;
   onNewDocument: () => void;
   onOpenDocument: () => void;
   onSaveDocument: () => void;
@@ -73,9 +80,18 @@ interface ToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onAddText: () => void;
+  onAddShape: (shapeType: "rect" | "ellipse") => void;
   onAddImage: () => void;
   onAddAttachment: () => void;
+  connectorMode: boolean;
+  onToggleConnectorMode: () => void;
+  selectedConnectorStyle: ConnectorStyleControls | null;
+  onSetConnectorStroke: (stroke: string) => void;
+  onSetConnectorStrokeWidth: (strokeWidth: number) => void;
+  onSetConnectorLineStyle: (lineStyle: ConnectorStyleControls["lineStyle"]) => void;
+  onSetConnectorEndMarker: (endMarker: ConnectorStyleControls["endMarker"]) => void;
   onInsertTable: () => void;
+  onGenerateTimeline: () => void;
   onInsertTableColumn: () => void;
   onInsertTableColumnLeft: () => void;
   onDeleteTableColumn: () => void;
@@ -114,6 +130,7 @@ export const Toolbar = ({
   canInsertTable,
   canInsertTableColumn,
   canFormatText,
+  canGenerateTimeline,
   onNewDocument,
   onOpenDocument,
   onSaveDocument,
@@ -121,9 +138,18 @@ export const Toolbar = ({
   onUndo,
   onRedo,
   onAddText,
+  onAddShape,
   onAddImage,
   onAddAttachment,
+  connectorMode,
+  onToggleConnectorMode,
+  selectedConnectorStyle,
+  onSetConnectorStroke,
+  onSetConnectorStrokeWidth,
+  onSetConnectorLineStyle,
+  onSetConnectorEndMarker,
   onInsertTable,
+  onGenerateTimeline,
   onInsertTableColumn,
   onInsertTableColumnLeft,
   onDeleteTableColumn,
@@ -259,8 +285,61 @@ export const Toolbar = ({
       return (
         <div className="toolbar-group">
           <button type="button" className="toolbar-button" onClick={onAddText}>文本块</button>
+          <button type="button" className="toolbar-button" onClick={() => onAddShape("rect")}>矩形</button>
+          <button type="button" className="toolbar-button" onClick={() => onAddShape("ellipse")}>椭圆</button>
+          <button
+            type="button"
+            className={`toolbar-button ${connectorMode ? "active" : ""}`}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onToggleConnectorMode}
+            aria-pressed={connectorMode}
+          >
+            连线
+          </button>
           <button type="button" className="toolbar-button" onPointerDown={(event) => event.preventDefault()} onClick={onAddImage}>图片</button>
           <button type="button" className="toolbar-button" onPointerDown={(event) => event.preventDefault()} onClick={onAddAttachment}>附件</button>
+          <input
+            className="connector-color-input"
+            type="color"
+            value={selectedConnectorStyle?.stroke ?? "#2563eb"}
+            disabled={!selectedConnectorStyle}
+            onChange={(event) => onSetConnectorStroke(event.currentTarget.value)}
+            aria-label="连线颜色"
+          />
+          <select
+            className="text-format-select connector-width-select"
+            value={String(selectedConnectorStyle?.strokeWidth ?? 2)}
+            disabled={!selectedConnectorStyle}
+            onChange={(event) => onSetConnectorStrokeWidth(Number(event.currentTarget.value))}
+            aria-label="连线粗细"
+          >
+            <option value="1">1px</option>
+            <option value="2">2px</option>
+            <option value="4">4px</option>
+            <option value="6">6px</option>
+          </select>
+          <select
+            className="text-format-select connector-style-select"
+            value={selectedConnectorStyle?.lineStyle ?? "solid"}
+            disabled={!selectedConnectorStyle}
+            onChange={(event) => onSetConnectorLineStyle(event.currentTarget.value as ConnectorStyleControls["lineStyle"])}
+            aria-label="连线样式"
+          >
+            <option value="solid">实线</option>
+            <option value="dashed">虚线</option>
+            <option value="dotted">点线</option>
+          </select>
+          <select
+            className="text-format-select connector-marker-select"
+            value={selectedConnectorStyle?.endMarker ?? "arrow"}
+            disabled={!selectedConnectorStyle}
+            onChange={(event) => onSetConnectorEndMarker(event.currentTarget.value as ConnectorStyleControls["endMarker"])}
+            aria-label="线尾标记"
+          >
+            <option value="none">无线尾</option>
+            <option value="arrow">箭头</option>
+            <option value="circle">圆点</option>
+          </select>
           <button
             type="button"
             className="toolbar-button"
@@ -269,6 +348,15 @@ export const Toolbar = ({
             onClick={onInsertTable}
           >
             表格
+          </button>
+          <button
+            type="button"
+            className="toolbar-button"
+            disabled={!canGenerateTimeline}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onGenerateTimeline}
+          >
+            生成时间线
           </button>
         </div>
       );

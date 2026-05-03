@@ -1,0 +1,650 @@
+{
+  "format": "icanvas",
+  "version": 2,
+  "meta": {
+    "id": "doc_timeline_example",
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  },
+  "nodes": [
+    {
+      "id": "node_timeline_source_table",
+      "type": "text",
+      "pageIndex": 0,
+      "x": 80,
+      "y": 120,
+      "w": 980,
+      "h": 520,
+      "z": 1,
+      "style": {
+        "fontSize": 16
+      },
+      "content": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "选中这个文本块，点击插入栏里的“生成时间线”，会在右侧生成一个新的时间线图。下面这张表就是数据源。"
+              }
+            ]
+          },
+          {
+            "type": "table",
+            "w": 960,
+            "colWidths": [
+              170,
+              100,
+              300,
+              390
+            ],
+            "rows": [
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "方向"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "年份"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "标题"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "DOI"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AI分子表示"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2021"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "GNN分子表示基准"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1186/s13321-020-00479-8"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AI分子表示"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2025"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Token-Mol"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1038/s41467-025-59628-y"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "SBDD"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2022"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Graph Transformer docking"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1021/acs.jmedchem.2c00991"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "SBDD"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "DiffDock-L style benchmark"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1038/s41592-024-02272-8"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "打分函数"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2017"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "OnionNet"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1021/acs.jcim.9b00628"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "打分函数"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2023"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Deep scoring function survey"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1021/acs.jcim.3c00155"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "ADMET"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2019"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Molecular property prediction"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1021/acs.jcim.9b00237"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "ADMET"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Multitask ADMET foundation model"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "10.1038/s42256-024-00843-5"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_timeline_preview",
+      "type": "image",
+      "pageIndex": 0,
+      "x": 1120,
+      "y": 120,
+      "w": 980,
+      "h": 720,
+      "z": 2,
+      "assetId": "asset_timeline_preview_html",
+      "style": {
+        "kind": "timeline-preview"
+      }
+    }
+  ],
+  "assets": {
+    "asset_timeline_preview_html": {
+      "id": "asset_timeline_preview_html",
+      "type": "html",
+      "storage": "embedded",
+      "mimeType": "text/html",
+      "name": "科研方向时间线示例.timeline.html",
+      "data": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>科研方向时间线示例</title><style>*{box-sizing:border-box}html,body{margin:0;background:#fff;font-family:\"Microsoft YaHei\",\"Segoe UI\",Arial,sans-serif;color:#0f172a}svg{display:block;width:1800px;height:972px}.title{font-size:34px;font-weight:800;fill:#0f172a}.subtitle{font-size:16px;fill:#64748b}.year{font-size:14px;font-weight:700;fill:#475569}.lane{font-size:21px;font-weight:800;fill:#0f172a}.item{font-size:17px;font-weight:700;fill:#0f172a}.item-year{font-size:13px;font-weight:800;fill:#64748b}a:hover rect{filter:drop-shadow(0 8px 16px rgba(15,23,42,.18))}</style></head><body><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1800\" height=\"972\" viewBox=\"0 0 1800 972\" role=\"img\" aria-label=\"科研方向时间线示例\"><rect width=\"1800\" height=\"972\" fill=\"#fff\"/><text x=\"40\" y=\"58\" class=\"title\">科研方向时间线示例</text><text x=\"42\" y=\"92\" class=\"subtitle\">2017 - 2025 · 8 项 · 4 个方向</text><line x1=\"230.0\" y1=\"112\" x2=\"230.0\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"230.0\" y=\"98\" class=\"year\" text-anchor=\"middle\">2017</text><line x1=\"411.3\" y1=\"112\" x2=\"411.3\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"411.3\" y=\"98\" class=\"year\" text-anchor=\"middle\">2018</text><line x1=\"592.5\" y1=\"112\" x2=\"592.5\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"592.5\" y=\"98\" class=\"year\" text-anchor=\"middle\">2019</text><line x1=\"773.8\" y1=\"112\" x2=\"773.8\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"773.8\" y=\"98\" class=\"year\" text-anchor=\"middle\">2020</text><line x1=\"955.0\" y1=\"112\" x2=\"955.0\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"955.0\" y=\"98\" class=\"year\" text-anchor=\"middle\">2021</text><line x1=\"1136.3\" y1=\"112\" x2=\"1136.3\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"1136.3\" y=\"98\" class=\"year\" text-anchor=\"middle\">2022</text><line x1=\"1317.5\" y1=\"112\" x2=\"1317.5\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"1317.5\" y=\"98\" class=\"year\" text-anchor=\"middle\">2023</text><line x1=\"1498.8\" y1=\"112\" x2=\"1498.8\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"1498.8\" y=\"98\" class=\"year\" text-anchor=\"middle\">2024</text><line x1=\"1680.0\" y1=\"112\" x2=\"1680.0\" y2=\"910\" stroke=\"#cbd5e1\" stroke-dasharray=\"4 8\"/><text x=\"1680.0\" y=\"98\" class=\"year\" text-anchor=\"middle\">2025</text><rect x=\"0\" y=\"140\" width=\"1800\" height=\"190\" fill=\"#f8fafc\"/><rect x=\"28\" y=\"164\" width=\"8\" height=\"142\" rx=\"4\" fill=\"#2563eb\"/><text x=\"52\" y=\"202\" class=\"lane\">AI分子表示</text><line x1=\"230\" y1=\"235\" x2=\"1680\" y2=\"235\" stroke=\"#2563eb\" stroke-width=\"2\" opacity=\"0.28\"/><rect x=\"0\" y=\"330\" width=\"1800\" height=\"190\" fill=\"#ffffff\"/><rect x=\"28\" y=\"354\" width=\"8\" height=\"142\" rx=\"4\" fill=\"#16a34a\"/><text x=\"52\" y=\"392\" class=\"lane\">SBDD</text><line x1=\"230\" y1=\"425\" x2=\"1680\" y2=\"425\" stroke=\"#16a34a\" stroke-width=\"2\" opacity=\"0.28\"/><rect x=\"0\" y=\"520\" width=\"1800\" height=\"190\" fill=\"#f8fafc\"/><rect x=\"28\" y=\"544\" width=\"8\" height=\"142\" rx=\"4\" fill=\"#dc2626\"/><text x=\"52\" y=\"582\" class=\"lane\">打分函数</text><line x1=\"230\" y1=\"615\" x2=\"1680\" y2=\"615\" stroke=\"#dc2626\" stroke-width=\"2\" opacity=\"0.28\"/><rect x=\"0\" y=\"710\" width=\"1800\" height=\"190\" fill=\"#ffffff\"/><rect x=\"28\" y=\"734\" width=\"8\" height=\"142\" rx=\"4\" fill=\"#9333ea\"/><text x=\"52\" y=\"772\" class=\"lane\">ADMET</text><line x1=\"230\" y1=\"805\" x2=\"1680\" y2=\"805\" stroke=\"#9333ea\" stroke-width=\"2\" opacity=\"0.28\"/><a href=\"https://doi.org/10.1021/acs.jcim.9b00628\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"230.0\" y1=\"615\" x2=\"230.0\" y2=\"561.0\" stroke=\"#dc2626\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"230.0\" cy=\"615\" r=\"8\" fill=\"#dc2626\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"230.0\" y=\"524.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#dc2626\" stroke-width=\"2\"/><text x=\"248.0\" y=\"554.0\" class=\"item\">OnionNet</text><text x=\"462.0\" y=\"583.0\" class=\"item-year\" text-anchor=\"end\">2017</text></g></a><a href=\"https://doi.org/10.1021/acs.jcim.9b00237\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"592.5\" y1=\"805\" x2=\"592.5\" y2=\"751.0\" stroke=\"#9333ea\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"592.5\" cy=\"805\" r=\"8\" fill=\"#9333ea\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"467.5\" y=\"714.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#9333ea\" stroke-width=\"2\"/><text x=\"485.5\" y=\"744.0\" class=\"item\">Molecular property prediction</text><text x=\"699.5\" y=\"773.0\" class=\"item-year\" text-anchor=\"end\">2019</text></g></a><a href=\"https://doi.org/10.1186/s13321-020-00479-8\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"955.0\" y1=\"235\" x2=\"955.0\" y2=\"181.0\" stroke=\"#2563eb\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"955.0\" cy=\"235\" r=\"8\" fill=\"#2563eb\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"830.0\" y=\"144.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#2563eb\" stroke-width=\"2\"/><text x=\"848.0\" y=\"174.0\" class=\"item\">GNN分子表示基准</text><text x=\"1062.0\" y=\"203.0\" class=\"item-year\" text-anchor=\"end\">2021</text></g></a><a href=\"https://doi.org/10.1021/acs.jmedchem.2c00991\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"1136.3\" y1=\"425\" x2=\"1136.3\" y2=\"371.0\" stroke=\"#16a34a\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"1136.3\" cy=\"425\" r=\"8\" fill=\"#16a34a\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"1011.3\" y=\"334.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#16a34a\" stroke-width=\"2\"/><text x=\"1029.3\" y=\"364.0\" class=\"item\">Graph Transformer docking</text><text x=\"1243.3\" y=\"393.0\" class=\"item-year\" text-anchor=\"end\">2022</text></g></a><a href=\"https://doi.org/10.1021/acs.jcim.3c00155\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"1317.5\" y1=\"615\" x2=\"1317.5\" y2=\"561.0\" stroke=\"#dc2626\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"1317.5\" cy=\"615\" r=\"8\" fill=\"#dc2626\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"1192.5\" y=\"524.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#dc2626\" stroke-width=\"2\"/><text x=\"1210.5\" y=\"554.0\" class=\"item\">Deep scoring function survey</text><text x=\"1424.5\" y=\"583.0\" class=\"item-year\" text-anchor=\"end\">2023</text></g></a><a href=\"https://doi.org/10.1038/s41592-024-02272-8\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"1498.8\" y1=\"425\" x2=\"1498.8\" y2=\"371.0\" stroke=\"#16a34a\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"1498.8\" cy=\"425\" r=\"8\" fill=\"#16a34a\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"1373.8\" y=\"334.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#16a34a\" stroke-width=\"2\"/><text x=\"1391.8\" y=\"364.0\" class=\"item\">DiffDock-L style benchmark</text><text x=\"1605.8\" y=\"393.0\" class=\"item-year\" text-anchor=\"end\">2024</text></g></a><a href=\"https://doi.org/10.1038/s42256-024-00843-5\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"1498.8\" y1=\"805\" x2=\"1498.8\" y2=\"751.0\" stroke=\"#9333ea\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"1498.8\" cy=\"805\" r=\"8\" fill=\"#9333ea\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"1373.8\" y=\"714.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#9333ea\" stroke-width=\"2\"/><text x=\"1391.8\" y=\"744.0\" class=\"item\">Multitask ADMET foundation model</text><text x=\"1605.8\" y=\"773.0\" class=\"item-year\" text-anchor=\"end\">2024</text></g></a><a href=\"https://doi.org/10.1038/s41467-025-59628-y\" target=\"_blank\" rel=\"noopener noreferrer\"><g><line x1=\"1680.0\" y1=\"235\" x2=\"1680.0\" y2=\"181.0\" stroke=\"#2563eb\" stroke-width=\"2\" opacity=\"0.55\"/><circle cx=\"1680.0\" cy=\"235\" r=\"8\" fill=\"#2563eb\" stroke=\"#fff\" stroke-width=\"3\"/><rect x=\"1430.0\" y=\"144.0\" width=\"250\" height=\"74\" rx=\"12\" fill=\"#fff\" stroke=\"#2563eb\" stroke-width=\"2\"/><text x=\"1448.0\" y=\"174.0\" class=\"item\">Token-Mol</text><text x=\"1662.0\" y=\"203.0\" class=\"item-year\" text-anchor=\"end\">2025</text></g></a></svg></body></html>"
+    }
+  },
+  "pageBounds": {
+    "x": 0,
+    "y": 0,
+    "w": 2400,
+    "h": 1200
+  },
+  "viewState": {
+    "cameraX": 0,
+    "cameraY": 0,
+    "zoom": 0.7
+  },
+  "appearance": {
+    "pageBackground": "#ffffff",
+    "grid": {
+      "enabled": false,
+      "color": "rgba(15, 23, 42, 0.08)",
+      "size": 24
+    },
+    "pages": {
+      "count": 1,
+      "height": 1200,
+      "gap": 72,
+      "titles": [
+        "时间线示例"
+      ]
+    }
+  }
+}
