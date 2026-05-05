@@ -21,6 +21,7 @@ import {
   createEmptyDocument,
   createConnectorNode,
   createImageNode,
+  createNodeId,
   createShapeNode,
   createTextNode,
   createTimelineNode,
@@ -102,6 +103,12 @@ type SidebarContextMenuState =
       y: number;
       pageIndex: number;
     };
+
+type PageClipboardState = {
+  mode: "copy" | "cut";
+  title: string;
+  nodes: CanvasNode[];
+};
 
 type CanvasContextMenuState = null | {
   x: number;
@@ -262,6 +269,103 @@ const serializeDocument = (document: DocumentFile) => JSON.stringify(document);
 
 const inferRequiredPageCount = (document: DocumentFile) => {
   return Math.max(1, document.nodes.reduce((maxPageCount, node) => Math.max(maxPageCount, node.pageIndex + 1), 1));
+};
+
+const cloneCanvasNode = <T,>(value: T): T => {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value)) as T;
+};
+
+const clonePageNodesForInsert = (nodes: CanvasNode[], pageIndex: number) => {
+  const idMap = new Map(nodes.map((node) => [node.id, createNodeId(node.type)]));
+
+  return nodes.map((node) => {
+    const next = {
+      ...cloneCanvasNode(node),
+      id: idMap.get(node.id) ?? createNodeId(node.type),
+      pageIndex,
+    } as CanvasNode;
+
+    if (next.type === "connector") {
+      return {
+        ...next,
+        ...(next.startNodeId && idMap.has(next.startNodeId) ? { startNodeId: idMap.get(next.startNodeId) } : {}),
+        ...(next.endNodeId && idMap.has(next.endNodeId) ? { endNodeId: idMap.get(next.endNodeId) } : {}),
+      } as CanvasNode;
+    }
+
+    if (next.type === "timeline") {
+      return {
+        ...next,
+        entries: next.entries.map((entry) => {
+          if (!entry.nodeRef || !idMap.has(entry.nodeRef.nodeId)) {
+            return entry;
+          }
+
+          return {
+            ...entry,
+            nodeRef: {
+              ...entry.nodeRef,
+              pageIndex,
+              nodeId: idMap.get(entry.nodeRef.nodeId)!,
+            },
+          };
+        }),
+      } as CanvasNode;
+    }
+
+    return next;
+  });
+};
+
+const removePageFromDocument = (document: DocumentFile, pageIndex: number): DocumentFile => ({
+  ...document,
+  nodes: document.nodes
+    .filter((node) => node.pageIndex !== pageIndex)
+    .map((node) => (node.pageIndex > pageIndex ? { ...node, pageIndex: node.pageIndex - 1 } : node)),
+  appearance: {
+    ...document.appearance,
+    pages: {
+      ...document.appearance.pages,
+      count: Math.max(1, document.appearance.pages.count - 1),
+      titles: (document.appearance.pages.titles ?? []).filter((_, index) => index !== pageIndex),
+    },
+  },
+});
+
+const insertPageIntoDocument = (
+  document: DocumentFile,
+  insertIndex: number,
+  title: string,
+  sourceNodes: CanvasNode[],
+): DocumentFile => {
+  const currentPageCount = Math.max(document.appearance.pages.count, inferRequiredPageCount(document));
+  const pageIndex = Math.max(0, Math.min(insertIndex, currentPageCount));
+  const titles = Array.from(
+    { length: currentPageCount },
+    (_, index) => document.appearance.pages.titles?.[index] ?? "",
+  );
+
+  titles.splice(pageIndex, 0, title);
+
+  return {
+    ...document,
+    nodes: [
+      ...document.nodes.map((node) => (node.pageIndex >= pageIndex ? { ...node, pageIndex: node.pageIndex + 1 } : node)),
+      ...clonePageNodesForInsert(sourceNodes, pageIndex),
+    ],
+    appearance: {
+      ...document.appearance,
+      pages: {
+        ...document.appearance.pages,
+        count: Math.max(document.appearance.pages.count + 1, titles.length),
+        titles,
+      },
+    },
+  };
 };
 
 const plainTextFromRichTextDoc = (doc: RichTextDoc) =>
@@ -620,6 +724,7 @@ export const App = () => {
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState>(null);
+  const [pageClipboard, setPageClipboard] = useState<PageClipboardState | null>(null);
   const [markdownDialog, setMarkdownDialog] = useState<MarkdownDialogState>(null);
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
   const [renamingFileName, setRenamingFileName] = useState("");
@@ -2116,6 +2221,56 @@ export const App = () => {
     setActivePageIndex(pageCount);
   };
 
+  const getPageSnapshot = (pageIndex: number): PageClipboardState => ({
+    mode: "copy",
+    title: documentFile.appearance.pages.titles?.[pageIndex] ?? "",
+    nodes: cloneCanvasNode(documentFile.nodes.filter((node) => node.pageIndex === pageIndex)),
+  });
+
+  const handleCopyPage = (pageIndex: number) => {
+    setPageClipboard(getPageSnapshot(pageIndex));
+  };
+
+  const handleCutPage = (pageIndex: number) => {
+    if (pageCount <= 1) {
+      return;
+    }
+
+    setPageClipboard({
+      ...getPageSnapshot(pageIndex),
+      mode: "cut",
+    });
+    setSwipedPageIndex(null);
+    setSwipeOffset(0);
+    patchDocument((current) => settleDocumentLayout(removePageFromDocument(current, pageIndex)));
+    setActivePageIndex((current) => {
+      if (current > pageIndex) {
+        return current - 1;
+      }
+      return Math.max(0, Math.min(current, pageCount - 2));
+    });
+  };
+
+  const handlePastePageAfter = (pageIndex: number) => {
+    if (!pageClipboard) {
+      return;
+    }
+
+    const insertIndex = Math.max(0, Math.min(pageIndex + 1, pageCount));
+    setSwipedPageIndex(null);
+    setSwipeOffset(0);
+    patchDocument((current) => settleDocumentLayout(insertPageIntoDocument(
+      current,
+      insertIndex,
+      pageClipboard.title,
+      pageClipboard.nodes,
+    )));
+    setActivePageIndex(insertIndex);
+    if (pageClipboard.mode === "cut") {
+      setPageClipboard(null);
+    }
+  };
+
   const handleDeletePage = (pageIndex: number) => {
     if (pageCount <= 1) {
       return;
@@ -2123,20 +2278,7 @@ export const App = () => {
 
     setSwipedPageIndex(null);
     setSwipeOffset(0);
-    patchDocument((current) => settleDocumentLayout({
-      ...current,
-      nodes: current.nodes
-        .filter((node) => node.pageIndex !== pageIndex)
-        .map((node) => (node.pageIndex > pageIndex ? { ...node, pageIndex: node.pageIndex - 1 } : node)),
-      appearance: {
-        ...current.appearance,
-        pages: {
-          ...current.appearance.pages,
-          count: Math.max(1, current.appearance.pages.count - 1),
-          titles: (current.appearance.pages.titles ?? []).filter((_, index) => index !== pageIndex),
-        },
-      },
-    }));
+    patchDocument((current) => settleDocumentLayout(removePageFromDocument(current, pageIndex)));
     setActivePageIndex((current) => Math.max(0, Math.min(current, pageCount - 2)));
   };
 
@@ -3654,6 +3796,38 @@ export const App = () => {
                 }}
               >
                 重命名
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleCopyPage(sidebarContextMenu.pageIndex);
+                }}
+              >
+                复制页
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                disabled={pageCount <= 1}
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handleCutPage(sidebarContextMenu.pageIndex);
+                }}
+              >
+                剪切页
+              </button>
+              <button
+                type="button"
+                className="sidebar-context-menu-item"
+                disabled={!pageClipboard}
+                onClick={() => {
+                  setSidebarContextMenu(null);
+                  handlePastePageAfter(sidebarContextMenu.pageIndex);
+                }}
+              >
+                粘贴到此页后
               </button>
               <button
                 type="button"

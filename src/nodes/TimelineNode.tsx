@@ -5,7 +5,8 @@ import type { TimelineNode as TimelineNodeType, TimelineNodeFields } from "../mo
 
 type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation" | "altKey">;
 
-type DensityMode = "compact" | "standard" | "detailed";
+type EntryDensityMode = "compact" | "standard" | "detailed";
+type DensityMode = EntryDensityMode | "auto";
 
 interface TimelineNodeProps {
   node: TimelineNodeType;
@@ -38,6 +39,15 @@ const formatDate = (date: string) => {
     return `${y}年${parseInt(m)}月`;
   }
   return date;
+};
+
+const formatGroupDate = (date: string) => formatDate(date);
+
+const formatEntryDate = (date: string, groupKey: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date) && groupKey === date.slice(0, 7)) {
+    return `${parseInt(date.slice(8, 10))}日`;
+  }
+  return null;
 };
 
 const compareTimelineDateDesc = (left: string, right: string) =>
@@ -78,12 +88,14 @@ const EntryPopover = ({ entry, x, y }: { entry: TimelineNodeFields; x: number; y
 
 const EntryCard = ({
   entry,
+  groupKey,
   density,
   categoryColor,
   onNavigateTo,
 }: {
   entry: TimelineNodeFields;
-  density: DensityMode;
+  groupKey: string;
+  density: EntryDensityMode;
   categoryColor: string;
   onNavigateTo?: (pageIndex: number, nodeId: string) => void;
 }) => {
@@ -109,6 +121,7 @@ const EntryCard = ({
   }, [entry.nodeRef, onNavigateTo]);
 
   const imp = entry.importance ?? 3;
+  const entryDate = formatEntryDate(entry.date, groupKey);
 
   return (
     <div
@@ -120,12 +133,12 @@ const EntryCard = ({
       <div className="timeline-entry-main">
         <div className="timeline-entry-text">
           <div className="timeline-entry-title-row">
-            <span className="timeline-entry-date">{formatDate(entry.date)}</span>
+            {entryDate && <span className="timeline-entry-date">{entryDate}</span>}
             <span className="timeline-entry-title">{entry.title}</span>
             {entry.nodeRef && onNavigateTo && (
               <button
                 type="button"
-                className="timeline-nav-btn"
+                className="timeline-entry-nav"
                 onClick={handleNavigate}
                 title="跳转到关联节点"
               >
@@ -172,6 +185,13 @@ export const TimelineNode = ({
 
   const category = node.entries[0]?.category ?? "";
   const categoryColor = getCategoryColor(category);
+
+  const getEffectiveDensity = useCallback((entry: TimelineNodeFields): EntryDensityMode => {
+    if (density !== "auto") return density;
+    const imp = entry.importance ?? 3;
+    if (imp >= 5) return "detailed";
+    return "compact";
+  }, [density]);
 
   // Group by date for display
   const groupedEntries = useMemo(() => {
@@ -238,14 +258,14 @@ export const TimelineNode = ({
       {/* Toolbar */}
       <div className="timeline-node-toolbar">
         <div className="timeline-density-controls">
-          {(["compact", "standard", "detailed"] as DensityMode[]).map((d) => (
+          {(["compact", "standard", "detailed", "auto"] as DensityMode[]).map((d) => (
             <button
               key={d}
               type="button"
               className={`timeline-density-btn ${density === d ? "active" : ""}`}
               onClick={(e) => { e.stopPropagation(); setDensity(d); }}
             >
-              {d === "compact" ? "紧凑" : d === "standard" ? "标准" : "详细"}
+              {d === "compact" ? "紧凑" : d === "standard" ? "标准" : d === "detailed" ? "详细" : "自适应"}
             </button>
           ))}
         </div>
@@ -258,12 +278,13 @@ export const TimelineNode = ({
         )}
         {groupedEntries.map(([groupKey, entries]) => (
           <div key={groupKey} className="timeline-date-group">
-            <div className="timeline-date-header">{groupKey}</div>
+            <div className="timeline-date-header">{formatGroupDate(groupKey)}</div>
             {entries.map((entry, i) => (
               <EntryCard
                 key={`${entry.title}-${i}`}
                 entry={entry}
-                density={density}
+                groupKey={groupKey}
+                density={getEffectiveDensity(entry)}
                 categoryColor={categoryColor}
                 onNavigateTo={onNavigateTo}
               />
