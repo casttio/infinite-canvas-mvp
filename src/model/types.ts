@@ -163,6 +163,7 @@ export interface TimelineNodeFields {
   importance?: 1 | 2 | 3 | 4 | 5;
   addedAt?: string;
   source?: 'manual' | 'arxiv' | 'rss';
+  imageRefs?: { assetId: string; w?: number; h?: number }[];
   nodeRef?: {
     pageIndex: number;
     nodeId: string;

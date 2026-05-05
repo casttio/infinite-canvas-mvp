@@ -2671,3 +2671,17 @@ button:disabled {
   border-bottom: 2px solid;
   flex-shrink: 0;
 }
+
+.timeline-entry-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.timeline-entry-thumb {
+  display: block;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}

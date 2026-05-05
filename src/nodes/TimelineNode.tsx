@@ -1,15 +1,17 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ResizeHandle } from "../editor/resize";
+import type { AssetMap } from "../model/types";
 import type { TimelineNode as TimelineNodeType, TimelineNodeFields } from "../model/types";
 
 type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefault" | "stopPropagation" | "altKey">;
 
-type EntryDensityMode = "compact" | "standard" | "detailed";
+type EntryDensityMode = "compact" | "detailed";
 type DensityMode = EntryDensityMode | "auto";
 
 interface TimelineNodeProps {
   node: TimelineNodeType;
+  assets: AssetMap;
   selected: boolean;
   onSelect: () => void;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -149,7 +151,7 @@ const EntryCard = ({
           {density === "detailed" && entry.summary && (
             <div className="timeline-entry-summary">{entry.summary}</div>
           )}
-          {(density === "standard" || density === "detailed") && entry.org && (
+          {(density === "detailed") && entry.org && (
             <div className="timeline-entry-org">{entry.org}</div>
           )}
           {density === "detailed" && entry.tags && entry.tags.length > 0 && (
@@ -171,6 +173,7 @@ const EntryCard = ({
 
 export const TimelineNode = ({
   node,
+  assets,
   selected,
   onSelect,
   onPointerDown,
@@ -179,7 +182,7 @@ export const TimelineNode = ({
   onEntriesChange,
   onNavigateTo,
 }: TimelineNodeProps) => {
-  const [density, setDensity] = useState<DensityMode>("standard");
+  const [density, setDensity] = useState<DensityMode>("auto");
   const nodeRef = useRef<HTMLDivElement>(null);
   const lastMeasuredHRef = useRef(0);
 
@@ -258,14 +261,14 @@ export const TimelineNode = ({
       {/* Toolbar */}
       <div className="timeline-node-toolbar">
         <div className="timeline-density-controls">
-          {(["compact", "standard", "detailed", "auto"] as DensityMode[]).map((d) => (
+          {(["compact", "detailed", "auto"] as DensityMode[]).map((d) => (
             <button
               key={d}
               type="button"
               className={`timeline-density-btn ${density === d ? "active" : ""}`}
               onClick={(e) => { e.stopPropagation(); setDensity(d); }}
             >
-              {d === "compact" ? "紧凑" : d === "standard" ? "标准" : d === "detailed" ? "详细" : "自适应"}
+              {d === "compact" ? "紧凑" : d === "detailed" ? "详细" : "自适应"}
             </button>
           ))}
         </div>

@@ -1486,6 +1486,23 @@ export const App = () => {
 
     attachmentInputRef.current?.click();
   };
+  const handleInsertTimelineExample = () => {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "insert-timeline-example",
+        placement: "caret",
+        nonce: editorCommandNonceRef.current++,
+      });
+      return;
+    }
+
+    runQuickEditCommand({
+      type: "insert-timeline-example",
+      placement: "end",
+      nonce: editorCommandNonceRef.current++,
+    });
+  };
+
   const handleInsertTable = () => {
     if (editingNodeId) {
       setEditorCommand({
@@ -2076,10 +2093,9 @@ export const App = () => {
         [directoryPath]: (current[directoryPath] ?? []).filter((path) => path !== filePath),
       }));
       if (currentSavePath === filePath) {
-        setCurrentSavePath(null);
-        fileHandleRef.current = null;
-        setActiveFileHandle(null);
-        setIsDirty(true);
+        const nextDocument = createEmptyDocument();
+        loadIntoEditor(nextDocument);
+        clearAutosave();
       }
       refreshWorkspaceEntries().catch(() => {});
     } catch (error) {
@@ -2402,6 +2418,7 @@ export const App = () => {
       arxiv: r.arxiv,
       tags: r.tags,
       importance: r.importance,
+      imageRefs: r.imageRefs,
       addedAt: r.addedAt ?? new Date().toISOString(),
       source: r.source,
     }));
@@ -3527,6 +3544,7 @@ export const App = () => {
           onSetConnectorEndMarker={(endMarker) => updateSelectedConnector((connector) => ({ ...connector, endMarker }))}
           onInsertTable={handleInsertTable}
           onGenerateTimeline={handleGenerateTimeline}
+          onInsertTimelineExample={handleInsertTimelineExample}
           onInsertTableColumn={handleInsertTableColumn}
           onInsertTableColumnLeft={handleInsertTableColumnLeft}
           onDeleteTableColumn={handleDeleteTableColumn}
@@ -4349,6 +4367,7 @@ export const App = () => {
                       ? { ...current, entries }
                       : current);
                   }}
+                  assets={documentFile.assets}
                   onNavigateTo={(pageIndex, nodeId) => {
                     handleSelectPage(pageIndex + 1);
                     selectNode(nodeId);

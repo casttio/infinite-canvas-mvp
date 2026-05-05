@@ -92,6 +92,7 @@ interface ToolbarProps {
   onSetConnectorEndMarker: (endMarker: ConnectorStyleControls["endMarker"]) => void;
   onInsertTable: () => void;
   onGenerateTimeline: () => void;
+  onInsertTimelineExample: () => void;
   onInsertTableColumn: () => void;
   onInsertTableColumnLeft: () => void;
   onDeleteTableColumn: () => void;
@@ -150,6 +151,7 @@ export const Toolbar = ({
   onSetConnectorEndMarker,
   onInsertTable,
   onGenerateTimeline,
+  onInsertTimelineExample,
   onInsertTableColumn,
   onInsertTableColumnLeft,
   onDeleteTableColumn,
@@ -357,6 +359,14 @@ export const Toolbar = ({
             onClick={onGenerateTimeline}
           >
             生成时间线
+          </button>
+          <button
+            type="button"
+            className="toolbar-button"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onInsertTimelineExample}
+          >
+            时间线范例
           </button>
         </div>
       );
