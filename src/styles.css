@@ -781,8 +781,8 @@ button:disabled {
 }
 
 .toolbar-tab.active {
-  color: #6b21a8;
-  box-shadow: inset 0 -3px 0 #7e22ce;
+  color: #0f172a;
+  box-shadow: inset 0 -3px 0 #0f172a;
 }
 
 .toolbar-subrow {
