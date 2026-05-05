@@ -27,6 +27,9 @@ jobs:
 
       - name: Build and package Windows portable
         run: npm run exe
+        env:
+          WINEPREFIX: /tmp/wine
+          HOME: /root
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
