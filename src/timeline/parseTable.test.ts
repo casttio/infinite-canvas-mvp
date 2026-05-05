@@ -134,3 +134,64 @@ describe("parseTableToTimelineRows", () => {
     expect(rows[0]).toMatchObject({ category: "科学", date: "2022", title: "论文", link: "https://doi.org/10.1234/test.567" });
   });
 });
+
+  it("parses nodeRef columns", () => {
+    const node = makeTextNode({
+      type: "doc",
+      content: [{
+        type: "table",
+        rows: [
+          { type: "tableRow", cells: [
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "方向" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "年份" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "标题" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "页码" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "节点" }] }] },
+          ]},
+          { type: "tableRow", cells: [
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "方法" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "2023" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "实验A" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "2" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "node-abc-123" }] }] },
+          ]},
+        ],
+      }],
+    });
+    const rows = parseTableToTimelineRows(node);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      category: "方法",
+      date: "2023",
+      title: "实验A",
+      nodeRef: { pageIndex: 2, nodeId: "node-abc-123" },
+    });
+  });
+
+  it("skips nodeRef when page is not a number", () => {
+    const node = makeTextNode({
+      type: "doc",
+      content: [{
+        type: "table",
+        rows: [
+          { type: "tableRow", cells: [
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "方向" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "年份" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "标题" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "页码" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "节点" }] }] },
+          ]},
+          { type: "tableRow", cells: [
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "方法" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "2023" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "实验B" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "node-xyz" }] }] },
+          ]},
+        ],
+      }],
+    });
+    const rows = parseTableToTimelineRows(node);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].nodeRef).toBeUndefined();
+  });

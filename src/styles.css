@@ -2520,6 +2520,33 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.timeline-entry-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1;
+  color: #2563eb;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.12s;
+}
+
+.timeline-entry-nav:hover {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+
+.timeline-entry-nav:active {
+  background: #dbeafe;
+}
+
 
 .timeline-entry-summary {
   font-size: 12px;

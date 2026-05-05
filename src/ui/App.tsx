@@ -4153,6 +4153,10 @@ export const App = () => {
                       ? { ...current, entries }
                       : current);
                   }}
+                  onNavigateTo={(pageIndex, nodeId) => {
+                    handleSelectPage(pageIndex + 1);
+                    selectNode(nodeId);
+                  }}
                 />
               );
             })}

@@ -14,6 +14,7 @@ interface TimelineNodeProps {
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
   onEntriesChange?: (entries: TimelineNodeFields[]) => void;
+  onNavigateTo?: (pageIndex: number, nodeId: string) => void;
 }
 
 const KIND_ICONS: Record<string, string> = {
@@ -93,10 +94,12 @@ const EntryCard = ({
   entry,
   density,
   categoryColor,
+  onNavigateTo,
 }: {
   entry: TimelineNodeFields;
   density: DensityMode;
   categoryColor: string;
+  onNavigateTo?: (pageIndex: number, nodeId: string) => void;
 }) => {
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -112,9 +115,15 @@ const EntryCard = ({
     setPopover(null);
   }, []);
 
+  const handleNavigate = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (entry.nodeRef && onNavigateTo) {
+      onNavigateTo(entry.nodeRef.pageIndex, entry.nodeRef.nodeId);
+    }
+  }, [entry.nodeRef, onNavigateTo]);
+
   const recent = isRecent(entry.addedAt);
   const imp = entry.importance ?? 3;
-  isRecent(entry.addedAt);
 
   return (
     <>
@@ -138,6 +147,16 @@ const EntryCard = ({
             <div className="timeline-entry-title-row">
               <span className="timeline-entry-date">{formatDate(entry.date)}</span>
               <span className="timeline-entry-title">{entry.title}</span>
+              {entry.nodeRef && (
+                <button
+                  type="button"
+                  className="timeline-entry-nav"
+                  onClick={handleNavigate}
+                  title={entry.nodeRef.label ? `跳转至: ${entry.nodeRef.label}` : "跳转到源节点"}
+                >
+                  ↗
+                </button>
+              )}
             </div>
             {density === "detailed" && entry.summary && (
               <div className="timeline-entry-summary">{entry.summary}</div>
@@ -171,6 +190,7 @@ export const TimelineNode = ({
   onPointerDown,
   onResizePointerDown,
   onEntriesChange,
+  onNavigateTo,
 }: TimelineNodeProps) => {
   const [density, setDensity] = useState<DensityMode>("standard");
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
@@ -300,6 +320,7 @@ export const TimelineNode = ({
                 entry={entry}
                 density={density}
                 categoryColor={getCategoryColor(entry.category, categories.indexOf(entry.category))}
+                onNavigateTo={onNavigateTo}
               />
             ))}
           </div>

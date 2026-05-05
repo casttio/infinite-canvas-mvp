@@ -21,6 +21,11 @@ export interface TimelineRow {
   importance?: 1 | 2 | 3 | 4 | 5;
   addedAt?: string;       // ISO date
   source?: 'manual' | 'arxiv' | 'rss';
+  nodeRef?: {
+    pageIndex: number;
+    nodeId: string;
+    label?: string;
+  };
 }
 
 const inlineText = (inline: RichTextInline): string => {
@@ -116,6 +121,8 @@ export const parseTableToTimelineRows = (node: TextNode): TimelineRow[] => {
         authors: firstRow.findIndex((header) => ["作者", "authors", "author"].includes(header)),
         link: firstRow.findIndex((header) => ["doi", "链接", "link", "url"].includes(header)),
         doi: firstRow.findIndex((header) => ["doi"].includes(header)),
+        nodeRefPage: firstRow.findIndex((header) => ["页码", "page", "pageindex"].includes(header)),
+        nodeRefId: firstRow.findIndex((header) => ["节点id", "nodeid", "节点"].includes(header)),
         arxiv: firstRow.findIndex((header) => ["arxiv"].includes(header)),
         tags: firstRow.findIndex((header) => ["标签", "tags", "关键词", "keywords"].includes(header)),
         importance: firstRow.findIndex((header) => ["重要", "importance", "priority", "权重", "star"].includes(header)),
@@ -131,6 +138,8 @@ export const parseTableToTimelineRows = (node: TextNode): TimelineRow[] => {
         link: 3,
         doi: -1,
         arxiv: -1,
+        nodeRefPage: -1,
+        nodeRefId: -1,
         tags: -1,
         importance: -1,
       };
@@ -158,6 +167,18 @@ export const parseTableToTimelineRows = (node: TextNode): TimelineRow[] => {
         })()
       : undefined;
 
+    const nodeRef = headerIndexes.nodeRefPage >= 0 && headerIndexes.nodeRefId >= 0
+      ? (() => {
+          const pageVal = (row[headerIndexes.nodeRefPage] ?? "").trim();
+          const nodeIdVal = (row[headerIndexes.nodeRefId] ?? "").trim();
+          const pageNum = Number(pageVal);
+          if (pageVal && nodeIdVal && Number.isInteger(pageNum)) {
+            return { pageIndex: pageNum, nodeId: nodeIdVal };
+          }
+          return undefined;
+        })()
+      : undefined;
+
     const date = rawDate.includes("-") ? rawDate : (year ? String(year) : "");
     if (!category || !title || !date) {
       return [];
@@ -181,6 +202,7 @@ export const parseTableToTimelineRows = (node: TextNode): TimelineRow[] => {
     if (arxiv) rowOut.arxiv = arxiv;
     if (tags && tags.length > 0) rowOut.tags = tags;
     if (importance) rowOut.importance = importance;
+    if (nodeRef) rowOut.nodeRef = nodeRef;
 
     return [rowOut];
   });

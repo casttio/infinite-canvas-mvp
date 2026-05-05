@@ -163,6 +163,11 @@ export interface TimelineNodeFields {
   importance?: 1 | 2 | 3 | 4 | 5;
   addedAt?: string;
   source?: 'manual' | 'arxiv' | 'rss';
+  nodeRef?: {
+    pageIndex: number;
+    nodeId: string;
+    label?: string;
+  };
 }
 
 export interface TimelineNode extends BaseNode {
