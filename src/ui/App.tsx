@@ -2264,22 +2264,39 @@ export const App = () => {
       source: r.source,
     }));
 
-    const node = createTimelineNode(
-      selectedTextNode.x + selectedTextNode.w + 48,
-      selectedTextNode.y,
-      entries,
-    );
+    // Group entries by category, create one timeline node per category
+    const catMap = new Map<string, TimelineNodeFields[]>();
+    for (const e of entries) {
+      const list = catMap.get(e.category) ?? [];
+      list.push(e);
+      catMap.set(e.category, list);
+    }
 
-    patchDocument((current) => addNodeToDocument(
-      current,
-      {
-        ...node,
-        pageIndex: selectedTextNode.pageIndex,
-        w: Math.max(400, Math.min(980, entries.length * 30 + 80)),
-        h: Math.max(200, Math.min(600, entries.length * 28 + 60)),
-      },
-    ));
-    setSelectedNodeIds([node.id]);
+    const nodeIds: string[] = [];
+    let offsetX = selectedTextNode.x + selectedTextNode.w + 48;
+    const startY = selectedTextNode.y;
+
+    patchDocument((current) => {
+      let doc = current;
+      const categories = Array.from(catMap.keys());
+      categories.forEach((cat, i) => {
+        const catEntries = catMap.get(cat)!;
+        const node = createTimelineNode(
+          offsetX + i * (320 + 16),
+          startY,
+          catEntries,
+        );
+        doc = addNodeToDocument(doc, {
+          ...node,
+          pageIndex: selectedTextNode.pageIndex,
+          w: 320,
+          h: Math.max(200, Math.min(800, catEntries.length * 36 + 60)),
+        });
+        nodeIds.push(node.id);
+      });
+      return doc;
+    });
+    setSelectedNodeIds(nodeIds);
     setEditingNodeId(null);
   };
 
@@ -4148,6 +4165,11 @@ export const App = () => {
                   onSelect={() => selectNode(node.id)}
                   onPointerDown={(event) => startNodeDrag(event, node)}
                   onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                  onHeightChange={(h) => {
+                    updateNode(node.id, (current) =>
+                      current.type === "timeline" ? { ...current, h } : current
+                    );
+                  }}
                   onEntriesChange={(entries) => {
                     updateNode(node.id, (current) => current.type === "timeline"
                       ? { ...current, entries }

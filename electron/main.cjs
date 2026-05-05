@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard } = require("electron");
 const fs = require("node:fs/promises");
+const http = require("node:http");
 const path = require("path");
 const { pathToFileURL } = require("node:url");
 
@@ -15,6 +16,16 @@ const ATTACHMENTS_DIR_NAME = ".attachments";
 const DEFAULT_WORKSPACE_DIR_NAME = "Infinite Canvas";
 const SUPPORTED_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".json", ".txt", ".md", ".xml", ".one", ".onetoc2"]);
 const DOCUMENT_SUFFIXES = [".icanvas.html", ".icanvas.json", ".onetoc2", ".html", ".htm", ".json", ".txt", ".md", ".xml", ".one"];
+const RUNTIME_PORT = 19876;
+let mainWindow = null;
+let runtimeServer = null;
+let runtimeState = {
+  filePath: null,
+  viewState: null,
+  activePageIndex: 0,
+  selectedNodeIds: [],
+};
+const runtimePending = new Map();
 
 const ensureDefaultWorkspaceDir = async () => {
   const workspacePath = path.join(app.getPath("documents"), DEFAULT_WORKSPACE_DIR_NAME);
@@ -93,6 +104,116 @@ const readDocumentPayload = async (filePath) => {
     rawText: bytes.toString("utf8"),
     bytes: Array.from(bytes),
   };
+};
+
+const sendJson = (response, statusCode, payload) => {
+  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(payload));
+};
+
+const readJsonBody = (request) => new Promise((resolve, reject) => {
+  const chunks = [];
+  request.on("data", (chunk) => chunks.push(chunk));
+  request.on("end", () => {
+    if (chunks.length === 0) {
+      resolve({});
+      return;
+    }
+    try {
+      resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    } catch (error) {
+      reject(error);
+    }
+  });
+  request.on("error", reject);
+});
+
+const requestRuntimeRendererAction = (channel, payload) => new Promise((resolve, reject) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    reject(new Error("Infinite Canvas window is not available."));
+    return;
+  }
+
+  const requestId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const timeout = setTimeout(() => {
+    runtimePending.delete(requestId);
+    reject(new Error("Runtime request timed out."));
+  }, 15000);
+
+  runtimePending.set(requestId, {
+    resolve,
+    reject,
+    timeout,
+  });
+  mainWindow.webContents.send(channel, { requestId, ...payload });
+});
+
+const resolveRuntimeRequest = (result) => {
+  const requestId = typeof result?.requestId === "string" ? result.requestId : "";
+  const pending = runtimePending.get(requestId);
+  if (!pending) {
+    return;
+  }
+
+  clearTimeout(pending.timeout);
+  runtimePending.delete(requestId);
+  if (result.ok) {
+    pending.resolve(result);
+    return;
+  }
+  pending.reject(new Error(result.error || "Runtime request failed."));
+};
+
+const startRuntimeServer = () => {
+  if (runtimeServer) {
+    return;
+  }
+
+  runtimeServer = http.createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      if (request.method === "GET" && url.pathname === "/state") {
+        sendJson(response, 200, runtimeState);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/open") {
+        const body = await readJsonBody(request);
+        const filePath = typeof body.filePath === "string" ? body.filePath : "";
+        if (!filePath) {
+          sendJson(response, 400, { error: "filePath is required." });
+          return;
+        }
+        const result = await requestRuntimeRendererAction("runtime:open-document", { filePath });
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/navigate") {
+        const body = await readJsonBody(request);
+        const nodeId = typeof body.nodeId === "string" ? body.nodeId : "";
+        if (!nodeId) {
+          sendJson(response, 400, { error: "nodeId is required." });
+          return;
+        }
+        const result = await requestRuntimeRendererAction("runtime:navigate-to-node", { nodeId });
+        sendJson(response, 200, result);
+        return;
+      }
+
+      sendJson(response, 404, { error: "Not found." });
+    } catch (error) {
+      sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  runtimeServer.listen(RUNTIME_PORT, "127.0.0.1", () => {
+    console.log(`Infinite Canvas runtime server listening on http://127.0.0.1:${RUNTIME_PORT}`);
+  });
+  runtimeServer.on("error", (error) => {
+    console.warn("Infinite Canvas runtime server failed", error);
+    runtimeServer = null;
+  });
 };
 
 const getPageCountFromDocumentData = (documentData) => {
@@ -428,6 +549,13 @@ const createMainWindow = () => {
   window.webContents.on("context-menu", (_event, params) => {
     showContextMenu(window, params);
   });
+
+  mainWindow = window;
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
 };
 
 app.whenReady().then(() => {
@@ -494,6 +622,24 @@ app.whenReady().then(() => {
     const nextAlwaysOnTop = !window.isAlwaysOnTop();
     window.setAlwaysOnTop(nextAlwaysOnTop);
     return nextAlwaysOnTop;
+  });
+
+  ipcMain.handle("runtime:update-state", async (_event, state = {}) => {
+    runtimeState = {
+      ...runtimeState,
+      filePath: typeof state.filePath === "string" ? state.filePath : null,
+      viewState: state.viewState && typeof state.viewState === "object" ? state.viewState : null,
+      activePageIndex: Number.isFinite(Number(state.activePageIndex)) ? Number(state.activePageIndex) : 0,
+      selectedNodeIds: Array.isArray(state.selectedNodeIds) ? state.selectedNodeIds.filter((id) => typeof id === "string") : [],
+    };
+  });
+
+  ipcMain.handle("runtime:open-result", async (_event, result = {}) => {
+    resolveRuntimeRequest(result);
+  });
+
+  ipcMain.handle("runtime:navigate-result", async (_event, result = {}) => {
+    resolveRuntimeRequest(result);
   });
 
   ipcMain.handle("document:save", async (_event, options = {}) => {
@@ -758,6 +904,16 @@ app.whenReady().then(() => {
     };
   });
 
+  ipcMain.handle("dev:save-html", async (_event, htmlContent) => {
+    const tmpDir = app.getPath("temp");
+    const filePath = path.join(tmpDir, "codex-page-html.html");
+    await fs.writeFile(filePath, htmlContent, "utf8");
+    // Also write to home dir for easier access
+    const homePath = path.join(app.getPath("home"), "codex-page-html.html");
+    await fs.writeFile(homePath, htmlContent, "utf8");
+    return filePath + "\n" + homePath;
+  });
+
   ipcMain.handle("attachment:resolve-url", async (_event, options = {}) => {
     const documentPath = typeof options.documentPath === "string" && options.documentPath.length > 0
       ? options.documentPath
@@ -783,6 +939,7 @@ app.whenReady().then(() => {
   });
 
   createMainWindow();
+  startRuntimeServer();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -792,6 +949,10 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  if (runtimeServer) {
+    runtimeServer.close();
+    runtimeServer = null;
+  }
   if (process.platform !== "darwin") {
     app.quit();
   }

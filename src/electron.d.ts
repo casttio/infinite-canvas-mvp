@@ -129,9 +129,36 @@ declare global {
         documentPath: string;
         relativePath: string;
       }) => Promise<string | null>;
+      updateRuntimeState: (state: {
+        filePath: string | null;
+        viewState: import("./model/types").ViewState;
+        activePageIndex: number;
+        selectedNodeIds: string[];
+      }) => Promise<void>;
+      runtimeOpenResult: (result: {
+        requestId: string;
+        ok: boolean;
+        filePath?: string | null;
+        error?: string;
+      }) => Promise<void>;
+      runtimeNavigateResult: (result: {
+        requestId: string;
+        ok: boolean;
+        nodeId?: string;
+        error?: string;
+      }) => Promise<void>;
+      onRuntimeOpenDocument: (callback: (request: {
+        requestId: string;
+        filePath: string;
+      }) => void) => () => void;
+      onRuntimeNavigateToNode: (callback: (request: {
+        requestId: string;
+        nodeId: string;
+      }) => void) => () => void;
       minimizeWindow: () => Promise<void>;
       toggleMaximizeWindow: () => Promise<boolean>;
       closeWindow: () => Promise<void>;
+      dumpPageHtml: () => Promise<string>;
       isWindowAlwaysOnTop: () => Promise<boolean>;
       toggleWindowAlwaysOnTop: () => Promise<boolean>;
     };

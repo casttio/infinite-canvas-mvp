@@ -36,6 +36,9 @@ const escapeScriptJson = (value: string) =>
 const pageTitle = (document: DocumentFile, pageIndex: number) =>
   document.appearance.pages.titles?.[pageIndex]?.trim() || `页面 ${pageIndex + 1}`;
 
+const compareTimelineDateDesc = (left: string, right: string) =>
+  right.localeCompare(left);
+
 const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector" && node.type !== "timeline";
 
 const nodeStyle = (document: DocumentFile, node: BoxCanvasNode) => [
@@ -115,14 +118,16 @@ const renderNode = (document: DocumentFile, node: CanvasNode) => {
 
   if (node.type === "timeline") {
     const tn = node;
-    const items = tn.entries.map((e) =>
-      `<div class="timeline-entry">
+    const items = [...tn.entries]
+      .sort((left, right) => compareTimelineDateDesc(left.date, right.date))
+      .map((e) =>
+        `<div class="timeline-entry">
         <span class="timeline-entry-date">${escapeHtml(e.date)}</span>
         <strong class="timeline-entry-title">${escapeHtml(e.title)}</strong>
         ${e.org ? `<span class="timeline-entry-org">${escapeHtml(e.org)}</span>` : ""}
         ${e.summary ? `<p class="timeline-entry-summary">${escapeHtml(e.summary)}</p>` : ""}
       </div>`
-    ).join("\\n");
+      ).join("\\n");
     return `<div class="canvas-node preview-timeline-node" style="${nodeStyle(document, node as unknown as BoxCanvasNode)}"><div class="timeline-entries">${items}</div></div>`;
   }
 

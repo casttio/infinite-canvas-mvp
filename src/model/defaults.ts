@@ -164,7 +164,7 @@ export const createTimelineNode = (x: number, y: number, entries?: TimelineNode[
   pageIndex: 0,
   x,
   y,
-  w: 640,
+  w: 320,
   h: 400,
   z: 1,
   entries: entries ?? [],

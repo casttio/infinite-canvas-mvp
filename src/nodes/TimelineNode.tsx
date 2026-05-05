@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ResizeHandle } from "../editor/resize";
 import type { TimelineNode as TimelineNodeType, TimelineNodeFields } from "../model/types";
@@ -13,38 +13,22 @@ interface TimelineNodeProps {
   onSelect: () => void;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
+  onHeightChange?: (h: number) => void;
   onEntriesChange?: (entries: TimelineNodeFields[]) => void;
   onNavigateTo?: (pageIndex: number, nodeId: string) => void;
 }
-
-const KIND_ICONS: Record<string, string> = {
-  paper: "📄",
-  product: "📦",
-  release: "🚀",
-  policy: "🏛",
-  benchmark: "📊",
-  event: "📅",
-};
-
-const KIND_ICON_DEFAULT = "📌";
 
 const CATEGORY_COLORS = [
   "#2563eb", "#16a34a", "#dc2626", "#9333ea",
   "#ea580c", "#0891b2", "#4f46e5", "#be123c",
 ];
 
-const getCategoryColor = (category: string, paletteIndex: number) => {
+const getCategoryColor = (category: string) => {
   let hash = 0;
   for (let i = 0; i < category.length; i++) {
     hash = ((hash << 5) - hash) + category.charCodeAt(i);
   }
   return CATEGORY_COLORS[Math.abs(hash) % CATEGORY_COLORS.length];
-};
-
-const isRecent = (addedAt?: string) => {
-  if (!addedAt) return false;
-  const added = new Date(addedAt).getTime();
-  return Date.now() - added < 30 * 24 * 60 * 60 * 1000;
 };
 
 const formatDate = (date: string) => {
@@ -55,6 +39,9 @@ const formatDate = (date: string) => {
   }
   return date;
 };
+
+const compareTimelineDateDesc = (left: string, right: string) =>
+  right.localeCompare(left);
 
 const EntryPopover = ({ entry, x, y }: { entry: TimelineNodeFields; x: number; y: number }) => (
   <div
@@ -67,13 +54,12 @@ const EntryPopover = ({ entry, x, y }: { entry: TimelineNodeFields; x: number; y
     }}
   >
     <div className="timeline-popover-header">
-      <span className="timeline-popover-kind">{KIND_ICONS[entry.kind ?? ""] ?? KIND_ICON_DEFAULT}</span>
       <strong>{entry.title}</strong>
     </div>
     {entry.summary && <p className="timeline-popover-summary">{entry.summary}</p>}
     <div className="timeline-popover-meta">
-      {entry.org && <span>🏢 {entry.org}</span>}
-      {entry.authors && <span>✍️ {entry.authors}</span>}
+      {entry.org && <span>{entry.org}</span>}
+      {entry.authors && <span>{entry.authors}</span>}
       {entry.tags && entry.tags.length > 0 && (
         <div className="timeline-popover-tags">
           {entry.tags.map((tag) => (
@@ -122,64 +108,51 @@ const EntryCard = ({
     }
   }, [entry.nodeRef, onNavigateTo]);
 
-  const recent = isRecent(entry.addedAt);
   const imp = entry.importance ?? 3;
 
   return (
-    <>
-      <div
-        ref={ref}
-        className={`timeline-entry-card ${density === "compact" ? "compact" : ""} ${imp >= 5 ? "milestone" : ""}`}
-        style={{
-          borderLeftColor: categoryColor,
-          fontSize: imp >= 5 ? "1.05em" : undefined,
-        }}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        <div className="timeline-entry-main">
-          {density !== "compact" && (
-            <span className="timeline-entry-icon">
-              {KIND_ICONS[entry.kind ?? ""] ?? KIND_ICON_DEFAULT}
-            </span>
-          )}
-          <div className="timeline-entry-text">
-            <div className="timeline-entry-title-row">
-              <span className="timeline-entry-date">{formatDate(entry.date)}</span>
-              <span className="timeline-entry-title">{entry.title}</span>
-              {entry.nodeRef && (
-                <button
-                  type="button"
-                  className="timeline-entry-nav"
-                  onClick={handleNavigate}
-                  title={entry.nodeRef.label ? `跳转至: ${entry.nodeRef.label}` : "跳转到源节点"}
-                >
-                  ↗
-                </button>
-              )}
-            </div>
-            {density === "detailed" && entry.summary && (
-              <div className="timeline-entry-summary">{entry.summary}</div>
-            )}
-            {(density === "standard" || density === "detailed") && entry.org && (
-              <div className="timeline-entry-org">{entry.org}</div>
-            )}
-            {density === "detailed" && entry.tags && entry.tags.length > 0 && (
-              <div className="timeline-entry-tags">
-                {entry.tags.slice(0, 4).map((tag) => (
-                  <span key={tag} className="timeline-entry-tag">{tag}</span>
-                ))}
-                {entry.tags.length > 4 && <span className="timeline-entry-tag">+{entry.tags.length - 4}</span>}
-              </div>
+    <div
+      ref={ref}
+      className={`timeline-entry-card ${density === "compact" ? "compact" : ""} ${imp >= 5 ? "milestone" : ""}`}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className="timeline-entry-main">
+        <div className="timeline-entry-text">
+          <div className="timeline-entry-title-row">
+            <span className="timeline-entry-date">{formatDate(entry.date)}</span>
+            <span className="timeline-entry-title">{entry.title}</span>
+            {entry.nodeRef && onNavigateTo && (
+              <button
+                type="button"
+                className="timeline-nav-btn"
+                onClick={handleNavigate}
+                title="跳转到关联节点"
+              >
+                👁
+              </button>
             )}
           </div>
+          {density === "detailed" && entry.summary && (
+            <div className="timeline-entry-summary">{entry.summary}</div>
+          )}
+          {(density === "standard" || density === "detailed") && entry.org && (
+            <div className="timeline-entry-org">{entry.org}</div>
+          )}
+          {density === "detailed" && entry.tags && entry.tags.length > 0 && (
+            <div className="timeline-entry-tags">
+              {entry.tags.slice(0, 4).map((tag) => (
+                <span key={tag} className="timeline-entry-tag">{tag}</span>
+              ))}
+              {entry.tags.length > 4 && <span className="timeline-entry-tag">+{entry.tags.length - 4}</span>}
+            </div>
+          )}
         </div>
-        {recent && <span className="timeline-entry-dot" title="最近添加" />}
       </div>
       {popover && density !== "detailed" && (
         <EntryPopover entry={entry} x={popover.x} y={popover.y} />
       )}
-    </>
+    </div>
   );
 };
 
@@ -189,48 +162,60 @@ export const TimelineNode = ({
   onSelect,
   onPointerDown,
   onResizePointerDown,
+  onHeightChange,
   onEntriesChange,
   onNavigateTo,
 }: TimelineNodeProps) => {
   const [density, setDensity] = useState<DensityMode>("standard");
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  const [filterKind, setFilterKind] = useState<string | null>(null);
-  const [filterImportance, setFilterImportance] = useState<number | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const lastMeasuredHRef = useRef(0);
 
-  const categories = useMemo(() => {
-    const set = new Set(node.entries.map((e) => e.category));
-    return Array.from(set);
-  }, [node.entries]);
-
-  const filteredEntries = useMemo(() => {
-    let result = node.entries;
-    if (filterCategory) {
-      result = result.filter((e) => e.category === filterCategory);
-    }
-    if (filterKind) {
-      result = result.filter((e) => e.kind === filterKind);
-    }
-    if (filterImportance) {
-      result = result.filter((e) => (e.importance ?? 3) >= filterImportance);
-    }
-    return result;
-  }, [node.entries, filterCategory, filterKind, filterImportance]);
+  const category = node.entries[0]?.category ?? "";
+  const categoryColor = getCategoryColor(category);
 
   // Group by date for display
   const groupedEntries = useMemo(() => {
     const groups = new Map<string, TimelineNodeFields[]>();
-    for (const entry of filteredEntries) {
+    for (const entry of node.entries) {
       const key = entry.date.length >= 7 ? entry.date.slice(0, 7) : entry.date;
       const list = groups.get(key) ?? [];
       list.push(entry);
       groups.set(key, list);
     }
-    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredEntries]);
+    return Array.from(groups.entries())
+      .map(([key, entries]) => [
+        key,
+        [...entries].sort((left, right) => compareTimelineDateDesc(left.date, right.date)),
+      ] as const)
+      .sort(([a], [b]) => compareTimelineDateDesc(a, b));
+  }, [node.entries]);
+
+  // Auto-height: measure content and sync to DOM + data layer before paint
+  useLayoutEffect(() => {
+    const el = nodeRef.current;
+    if (!el) return;
+
+    let contentH = 8;
+    const scrollEl = el.querySelector(".timeline-entries-scroll");
+    if (scrollEl) {
+      contentH += scrollEl.scrollHeight;
+    }
+    const toolbar = el.querySelector(".timeline-node-toolbar") as HTMLElement | null;
+    const toolbarH = toolbar?.offsetHeight ?? 0;
+    const totalHeight = Math.max(60, toolbarH + contentH + 16);
+
+    if (Math.abs(totalHeight - lastMeasuredHRef.current) > 2) {
+      lastMeasuredHRef.current = totalHeight;
+      el.style.height = totalHeight + "px";
+      if (Math.abs(totalHeight - node.h) > 2) {
+        onHeightChange?.(totalHeight);
+      }
+    }
+  });
 
   return (
     <div
+      ref={nodeRef}
       className={`canvas-node timeline-node ${selected ? "selected" : ""}`}
       data-node-id={node.id}
       style={{
@@ -242,6 +227,14 @@ export const TimelineNode = ({
       onPointerDown={onPointerDown}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
     >
+      {/* Header with category name */}
+      <div
+        className="timeline-node-header"
+        style={{ borderBottomColor: categoryColor, color: categoryColor }}
+      >
+        {category}
+      </div>
+
       {/* Toolbar */}
       <div className="timeline-node-toolbar">
         <div className="timeline-density-controls">
@@ -251,65 +244,17 @@ export const TimelineNode = ({
               type="button"
               className={`timeline-density-btn ${density === d ? "active" : ""}`}
               onClick={(e) => { e.stopPropagation(); setDensity(d); }}
-              title={d === "compact" ? "紧凑" : d === "standard" ? "标准" : "详细"}
             >
               {d === "compact" ? "紧凑" : d === "standard" ? "标准" : "详细"}
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="timeline-filter-btn"
-          onClick={(e) => { e.stopPropagation(); setShowFilters(!showFilters); }}
-        >
-          {showFilters ? "收起过滤" : "过滤"}
-        </button>
       </div>
-
-      {/* Filter bar */}
-      {showFilters && (
-        <div className="timeline-filter-bar" onClick={(e) => e.stopPropagation()}>
-          <select
-            value={filterCategory ?? ""}
-            onChange={(e) => setFilterCategory(e.target.value || null)}
-            className="timeline-filter-select"
-          >
-            <option value="">全部方向</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-          <select
-            value={filterKind ?? ""}
-            onChange={(e) => setFilterKind(e.target.value || null)}
-            className="timeline-filter-select"
-          >
-            <option value="">全部类型</option>
-            <option value="paper">📄 论文</option>
-            <option value="product">📦 产品</option>
-            <option value="release">🚀 发布</option>
-            <option value="policy">🏛 政策</option>
-            <option value="benchmark">📊 基准</option>
-            <option value="event">📅 事件</option>
-          </select>
-          <select
-            value={filterImportance ?? ""}
-            onChange={(e) => setFilterImportance(e.target.value ? Number(e.target.value) : null)}
-            className="timeline-filter-select"
-          >
-            <option value="">全部重要度</option>
-            <option value="1">≥ 1</option>
-            <option value="3">≥ 3</option>
-            <option value="4">≥ 4</option>
-            <option value="5">★★★★★</option>
-          </select>
-        </div>
-      )}
 
       {/* Entries */}
       <div className="timeline-entries-scroll">
         {groupedEntries.length === 0 && (
-          <div className="timeline-empty">无匹配条目</div>
+          <div className="timeline-empty">无条目</div>
         )}
         {groupedEntries.map(([groupKey, entries]) => (
           <div key={groupKey} className="timeline-date-group">
@@ -319,7 +264,7 @@ export const TimelineNode = ({
                 key={`${entry.title}-${i}`}
                 entry={entry}
                 density={density}
-                categoryColor={getCategoryColor(entry.category, categories.indexOf(entry.category))}
+                categoryColor={categoryColor}
                 onNavigateTo={onNavigateTo}
               />
             ))}

@@ -1,5 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const runtimeListeners = new Map();
+
+ipcRenderer.on("runtime:open-document", (_event, request) => {
+  runtimeListeners.get("open-document")?.(request);
+});
+
+ipcRenderer.on("runtime:navigate-to-node", (_event, request) => {
+  runtimeListeners.get("navigate-to-node")?.(request);
+});
+
 contextBridge.exposeInMainWorld("electronApp", {
   getAutosaveDocument: () => ipcRenderer.invoke("autosave:get"),
   saveAutosaveDocument: (content) => ipcRenderer.invoke("autosave:save", content),
@@ -17,9 +27,25 @@ contextBridge.exposeInMainWorld("electronApp", {
   listWorkspaceDocumentSummaries: () => ipcRenderer.invoke("workspace:document-summaries"),
   pickAndImportAttachment: (options) => ipcRenderer.invoke("attachment:pick-import", options),
   resolveAttachmentUrl: (options) => ipcRenderer.invoke("attachment:resolve-url", options),
+  updateRuntimeState: (state) => ipcRenderer.invoke("runtime:update-state", state),
+  runtimeOpenResult: (result) => ipcRenderer.invoke("runtime:open-result", result),
+  runtimeNavigateResult: (result) => ipcRenderer.invoke("runtime:navigate-result", result),
+  onRuntimeOpenDocument: (callback) => {
+    runtimeListeners.set("open-document", callback);
+    return () => runtimeListeners.delete("open-document");
+  },
+  onRuntimeNavigateToNode: (callback) => {
+    runtimeListeners.set("navigate-to-node", callback);
+    return () => runtimeListeners.delete("navigate-to-node");
+  },
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
+  dumpPageHtml: () => {
+    const html = document.documentElement.outerHTML;
+    console.log('[Codex Debug] Sending HTML to main process, length:', html.length);
+    return ipcRenderer.invoke("dev:save-html", html);
+  },
   isWindowAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
   toggleWindowAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
 });
