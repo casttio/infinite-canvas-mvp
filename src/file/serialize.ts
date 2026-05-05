@@ -36,7 +36,7 @@ const escapeScriptJson = (value: string) =>
 const pageTitle = (document: DocumentFile, pageIndex: number) =>
   document.appearance.pages.titles?.[pageIndex]?.trim() || `页面 ${pageIndex + 1}`;
 
-const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector";
+const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector" && node.type !== "timeline";
 
 const nodeStyle = (document: DocumentFile, node: BoxCanvasNode) => [
   `left: ${node.x - document.pageBounds.x}px;`,
@@ -113,14 +113,33 @@ const renderNode = (document: DocumentFile, node: CanvasNode) => {
     return renderConnectorNode(document, node, document.nodes);
   }
 
-  return `<div class="canvas-node preview-text-node" style="${nodeStyle(document, node)}">${richTextDocToHtml(node.content, document.assets)}</div>`;
+  if (node.type === "timeline") {
+    const tn = node;
+    const items = tn.entries.map((e) =>
+      `<div class="timeline-entry">
+        <span class="timeline-entry-date">${escapeHtml(e.date)}</span>
+        <strong class="timeline-entry-title">${escapeHtml(e.title)}</strong>
+        ${e.org ? `<span class="timeline-entry-org">${escapeHtml(e.org)}</span>` : ""}
+        ${e.summary ? `<p class="timeline-entry-summary">${escapeHtml(e.summary)}</p>` : ""}
+      </div>`
+    ).join("\\n");
+    return `<div class="canvas-node preview-timeline-node" style="${nodeStyle(document, node as unknown as BoxCanvasNode)}"><div class="timeline-entries">${items}</div></div>`;
+  }
+
+  const textNode = node;
+  return `<div class="canvas-node preview-text-node" style="${nodeStyle(document, node)}">${richTextDocToHtml(textNode.content, document.assets)}</div>`;
 };
+
+
 
 const pagePreviewHeight = (document: DocumentFile, nodes: CanvasNode[]) => {
   const maxNodeBottom = nodes.reduce(
     (bottom, node) => {
-      if (!isBoxNode(node)) {
+      if (node.type === "connector") {
         return Math.max(bottom, node.y1 - document.pageBounds.y + 80, node.y2 - document.pageBounds.y + 80);
+      }
+      if (!isBoxNode(node)) {
+        return bottom;
       }
 
       return Math.max(bottom, node.y - document.pageBounds.y + node.h + 80);
@@ -195,6 +214,13 @@ export const serializeDocument = (document: DocumentFile): string => {
     .preview-frame-node { border: 1px solid rgba(15, 23, 42, 0.14); background: white; }
     .preview-attachment-node { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 16px; border: 1px solid rgba(15, 23, 42, 0.16); background: #f8fafc; color: #475569; }
     .preview-attachment-node strong { color: #16202a; }
+    .preview-timeline-node { padding: 12px 16px; border: 1px solid rgba(15, 23, 42, 0.12); background: #fafbfc; overflow: auto; }
+    .preview-timeline-node .timeline-entries { display: flex; flex-direction: column; gap: 6px; }
+    .preview-timeline-node .timeline-entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(15, 23, 42, 0.06); font-size: 13px; }
+    .preview-timeline-node .timeline-entry-date { font-weight: 700; color: #475569; min-width: 52px; }
+    .preview-timeline-node .timeline-entry-title { font-weight: 600; color: #0f172a; }
+    .preview-timeline-node .timeline-entry-org { color: #64748b; font-size: 12px; }
+    .preview-timeline-node .timeline-entry-summary { width: 100%; margin: 2px 0 0; color: #475569; font-size: 12px; }
   </style>
 </head>
 <body>

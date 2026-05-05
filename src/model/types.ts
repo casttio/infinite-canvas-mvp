@@ -92,7 +92,7 @@ export interface RichTextDoc extends UnknownFields {
 
 export interface BaseNode extends UnknownFields {
   id: string;
-  type: "text" | "image" | "shape";
+  type: "text" | "image" | "shape" | "timeline";
   pageIndex: number;
   x: number;
   y: number;
@@ -148,8 +148,30 @@ export interface ConnectorNode extends UnknownFields {
   style: Record<string, unknown>;
 }
 
+export interface TimelineNodeFields {
+  category: string;
+  date: string;
+  title: string;
+  summary?: string;
+  kind?: 'paper' | 'product' | 'release' | 'policy' | 'benchmark' | 'event';
+  org?: string;
+  authors?: string;
+  link?: string;
+  doi?: string;
+  arxiv?: string;
+  tags?: string[];
+  importance?: 1 | 2 | 3 | 4 | 5;
+  addedAt?: string;
+  source?: 'manual' | 'arxiv' | 'rss';
+}
+
+export interface TimelineNode extends BaseNode {
+  type: "timeline";
+  entries: TimelineNodeFields[];
+}
+
 export type BoxCanvasNode = TextNode | ImageNode | ShapeNode;
-export type CanvasNode = BoxCanvasNode | ConnectorNode;
+export type CanvasNode = BoxCanvasNode | ConnectorNode | TimelineNode;
 
 export interface Asset extends UnknownFields {
   id: string;

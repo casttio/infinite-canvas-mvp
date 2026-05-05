@@ -23,15 +23,17 @@ import {
   createImageNode,
   createShapeNode,
   createTextNode,
+  createTimelineNode,
   fitPageBoundsToNodes,
   touchDocument,
 } from "../model/defaults";
 import { addImageNodeToDocument, addNodeToDocument, updateNodeInDocument } from "../model/documentOps";
-import type { BoxCanvasNode, CanvasNode, ConnectorAnchor, ConnectorNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, RichTextInline, ShapeNode as ShapeNodeModel, TextNode as TextNodeModel, ViewState } from "../model/types";
+import type { BoxCanvasNode, CanvasNode, ConnectorAnchor, ConnectorNode, DocumentFile, PageBounds, RichTextBlock, RichTextDoc, RichTextInline, ShapeNode as ShapeNodeModel, TextNode as TextNodeModel, TimelineNodeFields, TimelineNode as TimelineNodeType, ViewState } from "../model/types";
 import { ConnectorLayer } from "../nodes/ConnectorLayer";
 import { distanceToSegment, isBoxCanvasNode, nearestAnchor, resolveAnchorPoint, resolveConnectorEndpoint } from "../nodes/connectorGeometry";
 import { ImageNode } from "../nodes/ImageNode";
 import { ShapeNode } from "../nodes/ShapeNode";
+import { TimelineNode } from "../nodes/TimelineNode";
 import { TextNode } from "../nodes/TextNode";
 import type { TextEditorCommand } from "../nodes/TextNode";
 import { generateTimelineHtml, getTimelineSize } from "../timeline/generateTimeline";
@@ -662,7 +664,8 @@ export const App = () => {
   const visiblePageNodes = documentFile.nodes
     .filter((node) => node.pageIndex === activePageIndex)
     .sort((left, right) => left.z - right.z);
-  const visiblePageBoxNodes = visiblePageNodes.filter(isBoxCanvasNode);
+  const visiblePageBoxNodes = visiblePageNodes.filter((n): n is BoxCanvasNode => n.type !== "connector" && n.type !== "timeline");
+  const visibleTimelineNodes = visiblePageNodes.filter((n): n is TimelineNodeType => n.type === "timeline");
   const visiblePageConnectors = visiblePageNodes.filter((node): node is ConnectorNode => node.type === "connector");
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
   const currentUpdatedAt = formatUpdatedAt(documentFile.meta.updatedAt);
@@ -2242,35 +2245,38 @@ export const App = () => {
     }
 
     const title = currentPageTitle.trim() || currentDisplayFileName || "时间线";
-    const assetId = createAssetId();
-    const html = generateTimelineHtml(rows, { title });
-    const size = getTimelineSize(rows);
-    const width = Math.min(980, size.width);
-    const height = Math.min(720, size.height);
-    const node = createImageNode(
+
+    // Create a live TimelineNode instead of a static HTML snapshot
+    const entries: TimelineNodeFields[] = rows.map((r) => ({
+      category: r.category,
+      date: r.date,
+      title: r.title,
+      summary: r.summary,
+      kind: r.kind,
+      org: r.org,
+      authors: r.authors,
+      link: r.link,
+      doi: r.doi,
+      arxiv: r.arxiv,
+      tags: r.tags,
+      importance: r.importance,
+      addedAt: r.addedAt ?? new Date().toISOString(),
+      source: r.source,
+    }));
+
+    const node = createTimelineNode(
       selectedTextNode.x + selectedTextNode.w + 48,
       selectedTextNode.y,
-      assetId,
-      width,
-      height,
+      entries,
     );
 
-    patchDocument((current) => addImageNodeToDocument(
+    patchDocument((current) => addNodeToDocument(
       current,
       {
         ...node,
         pageIndex: selectedTextNode.pageIndex,
-        style: {
-          kind: "timeline-preview",
-        },
-      },
-      {
-        id: assetId,
-        type: "html",
-        storage: "embedded",
-        mimeType: "text/html",
-        name: `${title}.timeline.html`,
-        data: html,
+        w: Math.max(400, Math.min(980, entries.length * 30 + 80)),
+        h: Math.max(200, Math.min(600, entries.length * 28 + 60)),
       },
     ));
     setSelectedNodeIds([node.id]);
@@ -2909,7 +2915,7 @@ export const App = () => {
 
         if (movedEnough) {
           const selectedIds = documentFile.nodes
-            .filter((node) => node.pageIndex === activePageIndex && isBoxCanvasNode(node) && rectsIntersect(selectionRect, node))
+            .filter((node) => node.pageIndex === activePageIndex && (isBoxCanvasNode(node) || node.type === "timeline") && rectsIntersect(selectionRect, node as { x: number; y: number; w: number; h: number }))
             .map((node) => node.id);
 
           setSelectedNodeIds(selectedIds);
@@ -3059,7 +3065,7 @@ export const App = () => {
       nodeIds,
       startPositions: Object.fromEntries(
         documentFile.nodes
-          .filter((item) => nodeIds.includes(item.id) && isBoxCanvasNode(item))
+          .filter((item) => nodeIds.includes(item.id) && (isBoxCanvasNode(item) || item.type === "timeline"))
           .map((item) => [item.id, { x: item.x, y: item.y }]),
       ) as Record<string, { x: number; y: number }>,
       startPointerX: event.clientX,
@@ -4133,6 +4139,23 @@ export const App = () => {
             temporaryConnector={getTemporaryConnector()}
             onEndpointPointerDown={startConnectorEndpointDrag}
           />
+          {visibleTimelineNodes.map((node) => {
+              return (
+                <TimelineNode
+                  key={node.id}
+                  node={node}
+                  selected={selectedNodeIds.includes(node.id)}
+                  onSelect={() => selectNode(node.id)}
+                  onPointerDown={(event) => startNodeDrag(event, node)}
+                  onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                  onEntriesChange={(entries) => {
+                    updateNode(node.id, (current) => current.type === "timeline"
+                      ? { ...current, entries }
+                      : current);
+                  }}
+                />
+              );
+            })}
           {visiblePageBoxNodes.map((node) => {
               if (node.type === "text") {
                 return (

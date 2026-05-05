@@ -1,6 +1,6 @@
 import type { BoxCanvasNode, CanvasNode, ConnectorAnchor, ConnectorNode } from "../model/types";
 
-export const isBoxCanvasNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector";
+export const isBoxCanvasNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector" && node.type !== "timeline";
 
 export const resolveAnchorPoint = (
   node: BoxCanvasNode,

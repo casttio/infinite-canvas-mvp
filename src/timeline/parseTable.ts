@@ -8,9 +8,19 @@ import type {
 
 export interface TimelineRow {
   category: string;
-  year: number;
+  date: string;           // YYYY or YYYY-MM
   title: string;
+  summary?: string;
+  kind?: 'paper' | 'product' | 'release' | 'policy' | 'benchmark' | 'event';
+  org?: string;
+  authors?: string;
   link?: string;
+  doi?: string;
+  arxiv?: string;
+  tags?: string[];
+  importance?: 1 | 2 | 3 | 4 | 5;
+  addedAt?: string;       // ISO date
+  source?: 'manual' | 'arxiv' | 'rss';
 }
 
 const inlineText = (inline: RichTextInline): string => {
@@ -98,28 +108,80 @@ export const parseTableToTimelineRows = (node: TextNode): TimelineRow[] => {
   const headerIndexes = hasHeader
     ? {
         category: firstRow.findIndex((header) => ["方向", "category", "lane", "泳道"].includes(header)),
-        year: firstRow.findIndex((header) => ["年份", "year", "date"].includes(header)),
+        date: firstRow.findIndex((header) => ["年份", "year", "date", "日期"].includes(header)),
         title: firstRow.findIndex((header) => ["标题", "title", "name"].includes(header)),
+        summary: firstRow.findIndex((header) => ["摘要", "summary", "description", "描述"].includes(header)),
+        kind: firstRow.findIndex((header) => ["类型", "kind", "type", "类别"].includes(header)),
+        org: firstRow.findIndex((header) => ["机构", "org", "organization", "单位"].includes(header)),
+        authors: firstRow.findIndex((header) => ["作者", "authors", "author"].includes(header)),
         link: firstRow.findIndex((header) => ["doi", "链接", "link", "url"].includes(header)),
+        doi: firstRow.findIndex((header) => ["doi"].includes(header)),
+        arxiv: firstRow.findIndex((header) => ["arxiv"].includes(header)),
+        tags: firstRow.findIndex((header) => ["标签", "tags", "关键词", "keywords"].includes(header)),
+        importance: firstRow.findIndex((header) => ["重要", "importance", "priority", "权重", "star"].includes(header)),
       }
     : {
         category: 0,
-        year: 1,
+        date: 1,
         title: 2,
+        summary: -1,
+        kind: -1,
+        org: -1,
+        authors: -1,
         link: 3,
+        doi: -1,
+        arxiv: -1,
+        tags: -1,
+        importance: -1,
       };
   const rows = hasHeader ? matrix.slice(1) : matrix;
 
   return rows.flatMap((row) => {
-    const year = readYear(row[headerIndexes.year] ?? "");
+    const rawDate = (row[headerIndexes.date] ?? "").trim();
+    const year = readYear(rawDate);
     const category = (row[headerIndexes.category] ?? "").trim();
     const title = (row[headerIndexes.title] ?? "").trim();
+    const summary = headerIndexes.summary >= 0 ? (row[headerIndexes.summary] ?? "").trim() : undefined;
+    const kind = headerIndexes.kind >= 0 ? (row[headerIndexes.kind] ?? "").trim().toLowerCase() : undefined;
+    const org = headerIndexes.org >= 0 ? (row[headerIndexes.org] ?? "").trim() : undefined;
+    const authors = headerIndexes.authors >= 0 ? (row[headerIndexes.authors] ?? "").trim() : undefined;
     const link = headerIndexes.link >= 0 ? normalizeLink(row[headerIndexes.link] ?? "") : undefined;
+    const doi = headerIndexes.doi >= 0 ? normalizeLink(row[headerIndexes.doi] ?? "") : undefined;
+    const arxiv = headerIndexes.arxiv >= 0 ? normalizeLink(row[headerIndexes.arxiv] ?? "") : undefined;
+    const tags = headerIndexes.tags >= 0
+      ? (row[headerIndexes.tags] ?? "").split(/[,;、\s]+/).map((t) => t.trim()).filter(Boolean)
+      : undefined;
+    const importance = headerIndexes.importance >= 0
+      ? (() => {
+          const v = Number((row[headerIndexes.importance] ?? "").trim());
+          return v >= 1 && v <= 5 ? (v as 1|2|3|4|5) : undefined;
+        })()
+      : undefined;
 
-    if (!category || !year || !title) {
+    const date = rawDate.includes("-") ? rawDate : (year ? String(year) : "");
+    if (!category || !title || !date) {
       return [];
     }
 
-    return [{ category, year, title, ...(link ? { link } : {}) }];
+    const validKind = kind && ["paper","product","release","policy","benchmark","event"].includes(kind)
+      ? kind as TimelineRow["kind"]
+      : undefined;
+
+    const rowOut: TimelineRow = {
+      category,
+      date,
+      title,
+    };
+    if (summary) rowOut.summary = summary;
+    if (validKind) rowOut.kind = validKind;
+    if (org) rowOut.org = org;
+    if (authors) rowOut.authors = authors;
+    if (link) rowOut.link = link;
+    if (doi) rowOut.doi = doi;
+    if (arxiv) rowOut.arxiv = arxiv;
+    if (tags && tags.length > 0) rowOut.tags = tags;
+    if (importance) rowOut.importance = importance;
+
+    return [rowOut];
   });
 };

@@ -70,20 +70,25 @@ export const getTimelineSize = (rows: TimelineRow[], options: TimelineOptions = 
 };
 
 export const generateTimelineSvg = (rows: TimelineRow[], options: TimelineOptions = {}): string => {
+  const extractYear = (date: string) => {
+    const m = date.match(/^(\d{4})/);
+    return m ? Number(m[1]) : NaN;
+  };
+
   const normalizedRows = rows
-    .filter((row) => row.category.trim() && Number.isFinite(row.year) && row.title.trim())
+    .filter((row) => row.category.trim() && Number.isFinite(extractYear(row.date)) && row.title.trim())
     .map((row) => ({
       ...row,
       category: row.category.trim(),
       title: row.title.trim(),
     }))
-    .sort((left, right) => left.year - right.year || left.category.localeCompare(right.category));
+    .sort((left, right) => extractYear(left.date) - extractYear(right.date) || left.category.localeCompare(right.category));
   if (normalizedRows.length === 0) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${options.width ?? DEFAULT_WIDTH}" height="320" viewBox="0 0 ${options.width ?? DEFAULT_WIDTH} 320" role="img" aria-label="空时间线"><rect width="100%" height="100%" fill="#ffffff" /><text x="40" y="72" font-size="28" font-weight="800" fill="#0f172a">没有可用的时间线数据</text></svg>`;
   }
   const size = getTimelineSize(normalizedRows, options);
   const palette = options.palette ?? PALETTE;
-  const years = normalizedRows.map((row) => row.year);
+  const years = normalizedRows.map((row) => extractYear(row.date));
   const minYear = Math.min(...years);
   const maxYear = Math.max(...years);
   const yearSpan = Math.max(1, maxYear - minYear);
@@ -122,14 +127,14 @@ export const generateTimelineSvg = (rows: TimelineRow[], options: TimelineOption
 
   const itemBlocks = normalizedRows.map((row, index) => {
     const color = palette[size.categories.indexOf(row.category) % palette.length];
-    const usageKey = `${row.category}:${row.year}`;
+    const usageKey = `${row.category}:${extractYear(row.date)}`;
     const used = laneUsage.get(usageKey) ?? 0;
     laneUsage.set(usageKey, used + 1);
     const laneMidY = laneY(row.category) + size.laneHeight / 2;
     const direction = used % 2 === 0 ? -1 : 1;
     const offsetStep = Math.floor(used / 2) * 22;
     const cardY = laneMidY + direction * (54 + offsetStep) - CARD_HEIGHT / 2;
-    const x = yearToX(row.year);
+    const x = yearToX(extractYear(row.date));
     const cardX = Math.max(plotLeft, Math.min(plotRight - CARD_WIDTH, x - CARD_WIDTH / 2));
     const textLines = wrapText(row.title);
     const titleText = textLines.map((line, lineIndex) =>
@@ -140,7 +145,7 @@ export const generateTimelineSvg = (rows: TimelineRow[], options: TimelineOption
       <circle cx="${x}" cy="${laneMidY}" r="8" fill="${color}" stroke="#ffffff" stroke-width="3" />
       <rect x="${cardX}" y="${cardY}" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" rx="12" fill="#ffffff" stroke="${color}" stroke-width="2" />
       <text x="${cardX + 18}" y="${cardY + 28}" class="item-title">${titleText}</text>
-      <text x="${cardX + CARD_WIDTH - 16}" y="${cardY + CARD_HEIGHT - 15}" class="item-year" text-anchor="end">${row.year}</text>
+      <text x="${cardX + CARD_WIDTH - 16}" y="${cardY + CARD_HEIGHT - 15}" class="item-year" text-anchor="end">${row.date}</text>
     </g>`;
 
     if (!row.link) {

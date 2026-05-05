@@ -98,6 +98,27 @@ const shapeNodeSchema = baseNodeSchema.extend({
   label: richTextDocSchema.optional(),
 }).catchall(z.unknown());
 
+const timelineNodeFieldsSchema = z.object({
+  date: z.string(),
+  title: z.string(),
+  summary: z.string().optional(),
+  kind: z.enum(["paper", "product", "release", "policy", "benchmark", "event"]).optional(),
+  org: z.string().optional(),
+  authors: z.string().optional(),
+  link: z.string().optional(),
+  doi: z.string().optional(),
+  arxiv: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+  addedAt: z.string().optional(),
+  source: z.enum(["manual", "arxiv", "rss"]).optional(),
+}).catchall(z.unknown());
+
+const timelineNodeSchema = baseNodeSchema.extend({
+  type: z.literal("timeline"),
+  entries: z.array(timelineNodeFieldsSchema),
+}).catchall(z.unknown());
+
 const connectorNodeSchema = z.object({
   id: z.string(),
   type: z.literal("connector"),
@@ -139,7 +160,7 @@ export const documentFileSchema = z.object({
     createdAt: z.string(),
     updatedAt: z.string(),
   }).catchall(z.unknown()),
-  nodes: z.array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema, shapeNodeSchema, connectorNodeSchema])),
+  nodes: z.array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema, shapeNodeSchema, connectorNodeSchema, timelineNodeSchema])),
   assets: z.record(z.string(), assetSchema),
   pageBounds: z.object({
     x: z.number(),

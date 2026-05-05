@@ -10,6 +10,7 @@ import type {
   RichTextDoc,
   ShapeNode,
   TextNode,
+  TimelineNode,
 } from "./types";
 
 const nowIso = () => new Date().toISOString();
@@ -23,7 +24,7 @@ const randomId = (prefix: string) => {
 };
 
 export const createDocumentId = () => randomId("doc");
-export const createNodeId = (type: "text" | "image" | "shape" | "connector") => randomId(`node_${type}`);
+export const createNodeId = (type: "text" | "image" | "shape" | "connector" | "timeline") => randomId(`node_${type}`);
 export const createAssetId = () => randomId("asset");
 
 export const createDefaultRichTextDoc = (text = "双击编辑文本"): RichTextDoc => ({
@@ -154,6 +155,19 @@ export const createImageNode = (
   h: height,
   z: 1,
   assetId,
+  style: {},
+});
+
+export const createTimelineNode = (x: number, y: number, entries?: TimelineNode["entries"]): TimelineNode => ({
+  id: createNodeId("timeline"),
+  type: "timeline",
+  pageIndex: 0,
+  x,
+  y,
+  w: 640,
+  h: 400,
+  z: 1,
+  entries: entries ?? [],
   style: {},
 });
 

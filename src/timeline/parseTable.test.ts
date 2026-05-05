@@ -31,7 +31,7 @@ describe("parseTableToTimelineRows", () => {
     });
     const rows = parseTableToTimelineRows(node);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({ category: "科技", year: 2024, title: "AI突破" });
+    expect(rows[0]).toMatchObject({ category: "科技", date: "2024", title: "AI突破" });
   });
 
   it("parses table without header row (positional)", () => {
@@ -50,7 +50,7 @@ describe("parseTableToTimelineRows", () => {
     });
     const rows = parseTableToTimelineRows(node);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({ category: "商业", year: 2023, title: "新产品发布" });
+    expect(rows[0]).toMatchObject({ category: "商业", date: "2023", title: "新产品发布" });
   });
 
   it("returns empty array when no table exists", () => {
@@ -106,7 +106,7 @@ describe("parseTableToTimelineRows", () => {
       }],
     });
     const rows = parseTableToTimelineRows(node);
-    expect(rows[0].link).toBe("https://example.com");
+    expect(rows[0]).toMatchObject({ category: "科学", date: "2025", title: "发现", link: "https://example.com" });
   });
 
   it("converts DOI to URL", () => {
@@ -131,6 +131,6 @@ describe("parseTableToTimelineRows", () => {
       }],
     });
     const rows = parseTableToTimelineRows(node);
-    expect(rows[0].link).toBe("https://doi.org/10.1234/test.567");
+    expect(rows[0]).toMatchObject({ category: "科学", date: "2022", title: "论文", link: "https://doi.org/10.1234/test.567" });
   });
 });

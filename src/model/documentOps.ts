@@ -5,7 +5,7 @@ const VERTICAL_NODE_GAP = 24;
 
 const nextZ = (nodes: CanvasNode[]) => (nodes.length ? Math.max(...nodes.map((node) => node.z)) + 1 : 1);
 
-const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector";
+const isBoxNode = (node: CanvasNode): node is BoxCanvasNode => node.type !== "connector" && node.type !== "timeline";
 
 const clampNodeToPageOrigin = (node: CanvasNode, document: DocumentFile): CanvasNode => {
   if (!isBoxNode(node)) {

@@ -11,6 +11,7 @@ import type {
   RichTextTableRow,
   ShapeNode,
   TextNode,
+  TimelineNode,
 } from "./types";
 import { createDefaultDocumentAppearance } from "./defaults";
 
@@ -128,12 +129,12 @@ const normalizeNode = (node: CanvasNode, appearance: DocumentAppearance, pageBou
   const explicitPageIndex = typeof node.pageIndex === "number" && Number.isFinite(node.pageIndex)
     ? Math.max(0, Math.round(node.pageIndex))
     : null;
-  if (node.type === "connector") {
+  if (node.type === "connector" || node.type === "timeline") {
     return {
       ...node,
       pageIndex: explicitPageIndex ?? 0,
       style: node.style ?? {},
-    };
+    } as CanvasNode;
   }
 
   const inferredPageIndex = Math.max(0, Math.floor((node.y - pageBounds.y) / step));
