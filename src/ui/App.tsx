@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import packageInfo from "../../package.json";
 import { openFileWithPicker, setActiveFileHandle } from "../file/fileHandle";
@@ -44,6 +44,9 @@ import { FileSidebar, WorkspaceGraphPanel, getDisplayFileName } from "./FileSide
 import { Toolbar } from "./Toolbar";
 
 const APP_VERSION = packageInfo.version;
+import { searchInNodes, type SearchResult } from "../model/search";
+import { ReferencePopover, type ReferenceLink, type ReferenceNodeRef } from "../ui/ReferencePopover";
+import type { SearchScope } from "../ui/Toolbar";
 
 type InteractionState =
   | { type: "none" }
@@ -115,6 +118,14 @@ type CanvasContextMenuState = null | {
   y: number;
   worldX: number;
   worldY: number;
+  nodeId?: string;
+};
+
+type TrashEntry = {
+  name: string;
+  path: string;
+  size: number;
+  mtimeMs: number;
 };
 
 type MarkdownDialogState = null | {
@@ -475,6 +486,19 @@ const orderWorkspaceEntries = (
     .map(({ entry }) => entry);
 };
 
+/** Collect all visible file paths from workspace entries (DFS) */
+const collectVisibleFilePaths = (entries: WorkspaceEntry[]): string[] => {
+  const result: string[] = [];
+  const walk = (items: WorkspaceEntry[]) => {
+    for (const item of items) {
+      if (item.type === "file") result.push(item.path);
+      else if (item.type === "directory") walk(item.children);
+    }
+  };
+  walk(entries);
+  return result;
+};
+
 const readStoredPageState = () => {
   if (typeof window === "undefined") {
     return {};
@@ -704,6 +728,7 @@ export const App = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [editorCommand, setEditorCommand] = useState<TextEditorCommand | null>(null);
+  const [pendingNodeLinkRef, setPendingNodeLinkRef] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const [editorContentRevision, setEditorContentRevision] = useState(0);
   const [zoomTransitionActive, setZoomTransitionActive] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "pending" | "saved">("idle");
@@ -726,12 +751,31 @@ export const App = () => {
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState>(null);
   const [pageClipboard, setPageClipboard] = useState<PageClipboardState | null>(null);
   const [markdownDialog, setMarkdownDialog] = useState<MarkdownDialogState>(null);
+  const [trashEntries, setTrashEntries] = useState<TrashEntry[] | null>(null);
+  const [trashDialogOpen, setTrashDialogOpen] = useState(false);
+  const [nodeLinkPopover, setNodeLinkPopover] = useState<{ x: number; y: number; refs: ReferenceNodeRef[]; title: string; fullText?: string; previewContent?: import("../ui/ReferencePopover").PreviewContent; filePath?: string; links?: ReferenceLink[]; onAddRef?: () => void; onRemoveRef?: () => void } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<SearchScope>("current-document");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const [highlightQuery, setHighlightQuery] = useState("");
+  const searchDebounceRef = useRef<number | null>(null);
+  const openWorkspaceFileRef = useRef<(filePath: string, targetPageIndex?: number) => Promise<void>>(async () => {});
+  const [nodeLinkPicker, setNodeLinkPicker] = useState<{ editingNodeId: string; x: number; y: number } | null>(null);
+  const [externalDocPickerTab, setExternalDocPickerTab] = useState<"current" | "external">("current");
+  const [linkPickerSearch, setLinkPickerSearch] = useState("");
+  const [externalDocNodes, setExternalDocNodes] = useState<{ filePath: string; fileName: string; nodes: { id: string; pageIndex: number; type: string }[] }[] | null>(null);
+  const [externalDocsLoading, setExternalDocsLoading] = useState(false);
+  const [expandedExternalDocs, setExpandedExternalDocs] = useState<Set<string>>(new Set());
+  const [expandedExternalDocPages, setExpandedExternalDocPages] = useState<Record<string, Set<number>>>({});
   const [renamingFilePath, setRenamingFilePath] = useState<string | null>(null);
   const [renamingFileName, setRenamingFileName] = useState("");
   const [renamingDirectoryPath, setRenamingDirectoryPath] = useState<string | null>(null);
   const [renamingDirectoryName, setRenamingDirectoryName] = useState("");
   const [renamingPageIndex, setRenamingPageIndex] = useState<number | null>(null);
   const [renamingPageTitle, setRenamingPageTitle] = useState("");
+  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
+  const [lastSelectedFilePath, setLastSelectedFilePath] = useState<string | null>(null);
   const [managedAssetUrls, setManagedAssetUrls] = useState<Record<string, string>>({});
   const historyPastRef = useRef<DocumentFile[]>([]);
   const historyFutureRef = useRef<DocumentFile[]>([]);
@@ -1777,6 +1821,417 @@ export const App = () => {
     setEditingNodeId(null);
   };
 
+  const handleOpenTrash = useCallback(async () => {
+    if (!window.electronApp?.listTrashEntries) {
+      setErrorMessage("回收站功能需要在桌面版中使用。");
+      return;
+    }
+    try {
+      const entries = await window.electronApp.listTrashEntries();
+      setTrashEntries(entries);
+      setTrashDialogOpen(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "读取回收站失败。");
+    }
+  }, []);
+
+  const handleRestoreTrashEntry = useCallback(async (filePath: string) => {
+    if (!window.electronApp?.restoreTrashEntry) return;
+    try {
+      const result = await window.electronApp.restoreTrashEntry({ filePath });
+      setErrorMessage(null);
+      // Refresh trash list
+      const entries = await window.electronApp.listTrashEntries();
+      setTrashEntries(entries);
+      // Refresh workspace
+      refreshWorkspaceEntries().catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "还原失败。");
+    }
+  }, []);
+
+  const handleEmptyTrash = useCallback(async () => {
+    if (!window.electronApp?.emptyTrash || !window.confirm("确定清空回收站吗？此操作不可撤销。")) return;
+    try {
+      await window.electronApp.emptyTrash();
+      setTrashEntries([]);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "清空回收站失败。");
+    }
+  }, []);
+
+  const handleRequestInsertNodeLink = useCallback((editingNodeId: string, x: number, y: number) => {
+    setNodeLinkPicker({ editingNodeId, x, y });
+  }, []);
+
+  /** For timeline entries: open picker, then update the entry's nodeRef */
+  const [timelineNodeForRef, setTimelineNodeForRef] = useState<{ nodeId: string; entryIndex: number; x: number; y: number } | null>(null);
+
+  const handleRequestInsertTimelineRef = useCallback((timelineNodeId: string, entryIndex: number, x: number, y: number) => {
+    setTimelineNodeForRef({ nodeId: timelineNodeId, entryIndex, x, y });
+    setNodeLinkPicker({ editingNodeId: timelineNodeId, x, y });
+  }, []);
+
+  /** Open a full-featured reference popover for a timeline entry (rich preview + links + add-ref) */
+  /** Unified handler to open a reference popover for any node reference
+   *  (used by both text inline references and timeline entry references). */
+  const handleOpenNodePopover = useCallback(async (
+    targetPageIndex: number,
+    targetNodeId: string,
+    x: number,
+    y: number,
+    documentPath?: string,
+    extra?: {
+      links?: ReferenceLink[];
+      onAddRef?: () => void;
+      onRemoveRef?: () => void;
+    },
+  ) => {
+    const assets = documentFile.assets;
+
+    // Cross-document reference
+    if (documentPath && documentPath !== currentSavePath) {
+      if (window.electronApp?.readExternalNodePreview) {
+        try {
+          const preview = await window.electronApp.readExternalNodePreview({ filePath: documentPath, nodeId: targetNodeId });
+          if (preview) {
+            const fileName = documentPath.split(/[\\/]/).pop() ?? "";
+            const previewContent = (preview.content && preview.content.length > 0)
+              ? { kind: "richText" as const, blocks: preview.content, assets: preview.assets ?? {} }
+              : undefined;
+            setNodeLinkPopover({
+              x, y,
+              title: `${preview.title} · ${fileName}`,
+              previewContent,
+              links: extra?.links,
+              refs: [{
+                pageIndex: preview.pageIndex,
+                nodeId: preview.nodeId,
+                label: preview.title,
+                preview: preview.preview,
+                filePath: documentPath,
+              }],
+              filePath: documentPath,
+              onAddRef: extra?.onAddRef,
+              onRemoveRef: extra?.onRemoveRef,
+            });
+            return;
+          }
+        } catch {
+          // fall through to basic info
+        }
+      }
+      // Fallback: show basic info
+      const fileName = documentPath.split(/[\\/]/).pop() ?? "";
+      setNodeLinkPopover({
+        x, y,
+        title: `节点 ${targetNodeId} · ${fileName}`,
+        refs: [{ pageIndex: targetPageIndex, nodeId: targetNodeId, label: targetNodeId, preview: "来自其他文档", filePath: documentPath }],
+        filePath: documentPath,
+        onAddRef: extra?.onAddRef,
+        onRemoveRef: extra?.onRemoveRef,
+      });
+      return;
+    }
+
+    // Same-document reference
+    const targetNode = documentFile.nodes.find((n) => n.id === targetNodeId);
+    if (!targetNode) return;
+
+    let title = targetNode.id;
+    let preview = "";
+    let previewContent: import("../ui/ReferencePopover").PreviewContent | undefined;
+
+    if (targetNode.type === "text" && "content" in targetNode) {
+      const blocks = targetNode.content.content;
+      const firstPara = blocks.find((b) => b.type === "paragraph");
+      if (firstPara) {
+        const text = firstPara.content.map((i) => i.type === "text" ? i.text : "").join("").slice(0, 60);
+        if (text) title = text;
+      }
+      previewContent = { kind: "richText", blocks, assets };
+    } else if (targetNode.type === "shape" && "label" in targetNode && targetNode.label) {
+      const labelBlocks = targetNode.label.content;
+      const firstPara = labelBlocks.find((b) => b.type === "paragraph");
+      if (firstPara) {
+        title = firstPara.content.map((i) => i.type === "text" ? i.text : "").join("").slice(0, 60) || title;
+      }
+      previewContent = { kind: "richText", blocks: labelBlocks, assets };
+    } else if (targetNode.type === "timeline") {
+      title = targetNode.entries[0]?.category ?? "时间线";
+      preview = `${targetNode.entries.length} 个条目`;
+      previewContent = { kind: "text", text: preview };
+    } else {
+      preview = targetNode.type;
+      previewContent = { kind: "text", text: targetNode.type };
+    }
+
+    setNodeLinkPopover({
+      x, y,
+      title,
+      previewContent,
+      links: extra?.links,
+      refs: [{ pageIndex: targetPageIndex, nodeId: targetNodeId, label: title, preview, filePath: documentPath }],
+      onAddRef: extra?.onAddRef,
+      onRemoveRef: extra?.onRemoveRef,
+    });
+  }, [documentFile.nodes, documentFile.assets, currentSavePath]);
+
+  /** Open reference popover for a timeline entry */
+  const handleOpenTimelineRefPopover = useCallback((entry: TimelineNodeFields, entryIndex: number, timelineNodeId: string, x: number, y: number) => {
+    if (!entry.nodeRef) return;
+
+    const links: ReferenceLink[] = [];
+    if (entry.doi) links.push({ label: "打开 DOI", url: entry.doi, type: "doi" });
+    if (entry.arxiv) links.push({ label: "打开 arXiv", url: entry.arxiv, type: "arxiv" });
+    if (entry.link) links.push({ label: "打开链接", url: entry.link, type: "url" });
+
+    handleOpenNodePopover(
+      entry.nodeRef.pageIndex,
+      entry.nodeRef.nodeId,
+      x, y,
+      entry.nodeRef.documentPath,
+      {
+        links,
+        onAddRef: () => {
+          setNodeLinkPopover(null);
+          setTimeout(() => handleRequestInsertTimelineRef(timelineNodeId, entryIndex, x, y), 50);
+        },
+        onRemoveRef: () => {
+          patchDocument((current) => ({
+            ...current,
+            nodes: current.nodes.map((n) => {
+              if (n.id === timelineNodeId && n.type === "timeline") {
+                return {
+                  ...n,
+                  entries: n.entries.map((e, i) =>
+                    i === entryIndex ? { ...e, nodeRef: undefined } : e
+                  ),
+                };
+              }
+              return n;
+            }),
+          }));
+          setNodeLinkPopover(null);
+        },
+      },
+    );
+  }, [handleOpenNodePopover, patchDocument]);
+
+  const handlePickNodeForLink = useCallback((pageIndex: number, nodeId: string, docPath?: string, paragraphIndex?: number) => {
+    if (!nodeLinkPicker) return;
+    // Find node title for label
+    let label = nodeId;
+    if (!docPath || docPath === currentSavePath) {
+      const targetNode = documentFile.nodes.find((n) => n.id === nodeId);
+      if (targetNode && targetNode.type === "text" && "content" in targetNode) {
+        const firstPara = targetNode.content.content.find((b) => b.type === "paragraph");
+        if (firstPara) {
+          const text = firstPara.content.map((i) => i.type === "text" ? i.text : "").join("").trim().slice(0, 40);
+          if (text) label = text;
+        }
+      } else if (targetNode && targetNode.type === "timeline") {
+        label = targetNode.entries[0]?.category ?? nodeId;
+      }
+    }
+    // Check if this is a timeline ref pick
+    if (timelineNodeForRef) {
+      patchDocument((current) => ({
+        ...current,
+        nodes: current.nodes.map((n) => {
+          if (n.id === timelineNodeForRef.nodeId && n.type === "timeline") {
+            return {
+              ...n,
+              entries: n.entries.map((e, i) =>
+                i === timelineNodeForRef.entryIndex
+                  ? { ...e, nodeRef: { pageIndex, nodeId, label, documentPath: docPath } }
+                  : e
+              ),
+            };
+          }
+          return n;
+        }),
+      }));
+      setTimelineNodeForRef(null);
+      setNodeLinkPicker(null);
+      return;
+    }
+    setEditorCommand({
+      type: "insert-node-link",
+      nonce: editorCommandNonceRef.current++,
+      nodeLinkPage: pageIndex,
+      nodeLinkId: nodeId,
+      nodeLinkLabel: label,
+      nodeLinkDoc: docPath,
+      ...(paragraphIndex !== undefined ? { nodeLinkParagraphIndex: paragraphIndex } : {}),
+    });
+    setNodeLinkPicker(null);
+  }, [nodeLinkPicker, documentFile.nodes, currentSavePath, timelineNodeForRef]);
+
+  const handleCancelNodeLinkPicker = useCallback(() => {
+    setNodeLinkPicker(null);
+    setTimelineNodeForRef(null);
+    setExternalDocPickerTab("current");
+    setExternalDocNodes(null);
+    setExpandedExternalDocs(new Set());
+    setExpandedExternalDocPages({});
+  }, []);
+
+  const handleNodeLinkClick = useCallback(async (pageIndex: number, nodeId: string, x: number, y: number, documentPath?: string) => {
+    handleOpenNodePopover(pageIndex, nodeId, x, y, documentPath);
+  }, [handleOpenNodePopover]);
+
+  // ── Search ──
+
+  const runSearch = useCallback((query: string, scope: SearchScope) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      setSearchActiveIndex(0);
+      return;
+    }
+
+    // Local search (current-page / current-document)
+    if (scope === "current-page" || scope === "current-document") {
+      const results = searchInNodes(
+        documentFile.nodes,
+        trimmed,
+        scope,
+        scope === "current-page" ? activePageIndex : undefined,
+      );
+      setSearchResults(results);
+      setSearchActiveIndex(Math.min(searchActiveIndex, results.length - 1));
+      return;
+    }
+
+    // Workspace search via IPC
+    if (scope === "workspace" && window.electronApp?.searchWorkspace) {
+      window.electronApp.searchWorkspace({ query: trimmed, currentPath: currentSavePath ?? undefined })
+        .then((results) => {
+          setSearchResults(results ?? []);
+          setSearchActiveIndex(0);
+        })
+        .catch(() => {
+          setSearchResults([]);
+        });
+    }
+  }, [documentFile.nodes, activePageIndex, searchActiveIndex, currentSavePath]);
+
+  // Debounced search effect
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = window.setTimeout(() => {
+      runSearch(searchQuery, searchScope);
+    }, 200);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery, searchScope, runSearch]);
+
+  // Center a node in the viewport (box nodes only — connectors can't be centered)
+  const centerNodeInViewport = useCallback((nodeId: string, position: "center" | "top-left" = "center") => {
+    const node = documentFile.nodes.find((n) => n.id === nodeId) as import("../model/types").BoxCanvasNode | undefined;
+    if (!node || !("x" in node && "w" in node)) return;
+    const zoom = documentFile.viewState.zoom;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+
+    let targetX: number;
+    let targetY: number;
+    if (position === "top-left") {
+      // Position node at roughly 1/3 from top-left of viewport
+      targetX = -node.x * zoom + rect.width / 3;
+      targetY = -node.y * zoom + rect.height / 3;
+    } else {
+      // Center node in the visible viewport area
+      targetX = -(node.x + node.w / 2) * zoom + rect.width / 2;
+      targetY = -(node.y + node.h / 2) * zoom + rect.height / 2;
+    }
+
+    patchDocument((current) => ({
+      ...current,
+      viewState: {
+        ...current.viewState,
+        cameraX: targetX,
+        cameraY: targetY,
+      },
+    }));
+  }, [documentFile.nodes, documentFile.viewState]);
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query);
+    setSearchActiveIndex(0);
+    setHighlightQuery("");
+  }, []);
+
+  const handleSearchScopeChange = useCallback((scope: SearchScope) => {
+    setSearchScope(scope);
+    setSearchResults([]);
+    setSearchActiveIndex(0);
+    setHighlightQuery("");
+  }, []);
+
+  const handleSearchResultClick = useCallback((result: SearchResult) => {
+    // Retain the query for text highlighting, then clear search UI
+    setHighlightQuery(searchQuery);
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchActiveIndex(0);
+
+    if (result.scope === "workspace" && result.filePath && result.filePath !== currentSavePath) {
+      // Open external file then select node — use ref to avoid ordering issue
+      const filePath = result.filePath;
+      const targetNodeId = result.nodeId;
+      const targetPage = result.pageIndex;
+      // We call handleOpenWorkspaceFile via a ref to avoid TDZ issues with const ordering
+      openWorkspaceFileRef.current(filePath, targetPage).then(() => {
+        selectNode(targetNodeId);
+        centerNodeInViewport(targetNodeId, "top-left");
+      }).catch(() => {});
+      return;
+    }
+
+    // Current document / page navigation
+    const targetPage = result.pageIndex;
+    if (targetPage !== activePageIndex) {
+      handleSelectPage(targetPage + 1);
+    }
+    selectNode(result.nodeId);
+    centerNodeInViewport(result.nodeId, "top-left");
+  }, [currentSavePath, activePageIndex, searchQuery]);
+
+  const handleSearchKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSearchActiveIndex((prev) => Math.min(prev + 1, searchResults.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSearchActiveIndex((prev) => Math.max(prev - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const active = searchResults[searchActiveIndex];
+      if (active) {
+        handleSearchResultClick(active);
+      }
+    }
+  }, [searchResults, searchActiveIndex, handleSearchResultClick]);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchActiveIndex(0);
+    setHighlightQuery("");
+  }, []);
+
+  const handleCloseTrash = useCallback(() => {
+    setTrashDialogOpen(false);
+    setTrashEntries(null);
+  }, []);
+
   const handleSubmitMarkdownDialog = () => {
     if (!markdownDialog) {
       return;
@@ -1828,6 +2283,7 @@ export const App = () => {
         savePath: result.filePath,
       });
       expandDirectoriesForFile(result.filePath);
+      setSelectedFilePaths([]);
       if (typeof targetPageIndex === "number") {
         const maxPageCount = Math.max(loaded.appearance.pages.count, inferRequiredPageCount(loaded));
         setActivePageIndex(Math.max(0, Math.min(targetPageIndex, maxPageCount - 1)));
@@ -1836,6 +2292,9 @@ export const App = () => {
       setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
     }
   };
+
+  // Keep ref in sync for search handler (avoids TDZ / ordering issues with const callbacks)
+  openWorkspaceFileRef.current = handleOpenWorkspaceFile;
 
   const handleToggleDirectory = (directoryPath: string) => {
     setExpandedDirectories((current) =>
@@ -2153,6 +2612,26 @@ export const App = () => {
     setRenamingPageTitle("");
   };
 
+  const handleFileSelect = useCallback((filePath: string, ctrlKey: boolean, shiftKey: boolean) => {
+    if (ctrlKey) {
+      setSelectedFilePaths(prev =>
+        prev.includes(filePath) ? prev.filter(p => p !== filePath) : [...prev, filePath]
+      );
+    } else if (shiftKey && lastSelectedFilePath) {
+      // Range select: collect all visible file paths
+      const allPaths = collectVisibleFilePaths(workspaceEntries);
+      const startIdx = allPaths.indexOf(lastSelectedFilePath);
+      const endIdx = allPaths.indexOf(filePath);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        setSelectedFilePaths(allPaths.slice(from, to + 1));
+      }
+    } else {
+      setSelectedFilePaths([filePath]);
+    }
+    setLastSelectedFilePath(filePath);
+  }, [lastSelectedFilePath, workspaceEntries]);
+
   const handleFileContextMenu = (
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
@@ -2290,6 +2769,16 @@ export const App = () => {
   const handleDeletePage = (pageIndex: number) => {
     if (pageCount <= 1) {
       return;
+    }
+
+    // Backup current document to trash before removing page
+    if (window.electronApp?.saveDocumentToTrash) {
+      const pageTitle = documentFile.appearance.pages.titles?.[pageIndex] ?? `第${pageIndex + 1}页`;
+      const baseName = `${pageTitle}-page-${pageIndex + 1}.icanvas.json`;
+      window.electronApp.saveDocumentToTrash({
+        content: serializeDocument(documentFile),
+        baseName,
+      }).catch(() => {});
     }
 
     setSwipedPageIndex(null);
@@ -2773,6 +3262,27 @@ export const App = () => {
   }, [currentSavePath, documentFile.assets]);
 
   useEffect(() => {
+    let blockMiddlePasteUntil = 0;
+
+    const blockMiddleClickDefault = (event: MouseEvent | PointerEvent) => {
+      if (event.button !== 1) {
+        return;
+      }
+
+      blockMiddlePasteUntil = performance.now() + 800;
+      event.preventDefault();
+    };
+
+    const blockMiddleClickPaste = (event: InputEvent) => {
+      if (!event.inputType.startsWith("insertFromPaste")) {
+        return;
+      }
+
+      if (performance.now() <= blockMiddlePasteUntil) {
+        event.preventDefault();
+      }
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const lowerKey = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.defaultPrevented) {
@@ -2882,10 +3392,22 @@ export const App = () => {
 
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("paste", handlePaste, true);
+    document.addEventListener("pointerdown", blockMiddleClickDefault, true);
+    document.addEventListener("pointerup", blockMiddleClickDefault, true);
+    document.addEventListener("mousedown", blockMiddleClickDefault, true);
+    document.addEventListener("mouseup", blockMiddleClickDefault, true);
+    document.addEventListener("auxclick", blockMiddleClickDefault, true);
+    document.addEventListener("beforeinput", blockMiddleClickPaste, true);
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("paste", handlePaste, true);
+      document.removeEventListener("pointerdown", blockMiddleClickDefault, true);
+      document.removeEventListener("pointerup", blockMiddleClickDefault, true);
+      document.removeEventListener("mousedown", blockMiddleClickDefault, true);
+      document.removeEventListener("mouseup", blockMiddleClickDefault, true);
+      document.removeEventListener("auxclick", blockMiddleClickDefault, true);
+      document.removeEventListener("beforeinput", blockMiddleClickPaste, true);
     };
   }, [documentFile, editingNodeId, selectedTextNode, selectedNodeIds]);
 
@@ -3520,6 +4042,7 @@ export const App = () => {
           onNewDocument={handleNewDocument}
           onOpenDocument={handleOpenClick}
           onSaveDocument={handleSave}
+          onOpenTrash={handleOpenTrash}
           onSaveAsDocument={handleSaveAs}
           onUndo={handleUndo}
           onRedo={handleRedo}
@@ -3566,6 +4089,15 @@ export const App = () => {
           onSetGridColor={handleSetGridColor}
           onSetGridSize={handleSetGridSize}
           onZoomChange={handleZoomChange}
+          searchQuery={searchQuery}
+          searchScope={searchScope}
+          searchResults={searchResults}
+          searchActiveIndex={searchActiveIndex}
+          onSearchChange={handleSearchChange}
+          onSearchScopeChange={handleSearchScopeChange}
+          onSearchResultClick={handleSearchResultClick}
+          onSearchKeyDown={handleSearchKeyDown}
+          onSearchClose={handleSearchClose}
         />
       </div>
 
@@ -3603,6 +4135,270 @@ export const App = () => {
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
+      {trashDialogOpen && trashEntries !== null ? (
+        <div className="modal-backdrop" onPointerDown={handleCloseTrash}>
+          <div className="trash-dialog" onPointerDown={(event) => event.stopPropagation()} style={{ width: 560, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="trash-dialog-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+              <strong style={{ fontSize: 16 }}>回收站</strong>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="toolbar-button" onClick={handleEmptyTrash} style={{ fontSize: 12, padding: '2px 10px' }} disabled={trashEntries.length === 0}>清空回收站</button>
+                <button type="button" onClick={handleCloseTrash} aria-label="关闭" style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#64748b' }}>×</button>
+              </div>
+            </div>
+            <div className="trash-dialog-body" style={{ overflowY: 'auto', padding: 8 }}>
+              {trashEntries.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>回收站是空的</div>
+              ) : (
+                trashEntries.map((entry) => {
+                  const originalName = entry.name.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_/, "");
+                  const deletedAt = new Date(entry.mtimeMs).toLocaleString("zh-CN");
+                  return (
+                    <div key={entry.path} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #f1f5f9' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{originalName}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>删除于 {deletedAt}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="toolbar-button"
+                        onClick={() => handleRestoreTrashEntry(entry.path)}
+                        style={{ fontSize: 12, padding: '2px 10px', flexShrink: 0 }}
+                      >还原</button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {nodeLinkPopover ? (
+        <ReferencePopover
+          title={nodeLinkPopover.title}
+          x={nodeLinkPopover.x}
+          y={nodeLinkPopover.y}
+          fullText={nodeLinkPopover.fullText}
+          previewContent={nodeLinkPopover.previewContent}
+          nodeRefs={nodeLinkPopover.refs}
+          links={nodeLinkPopover.links}
+          onAddRef={nodeLinkPopover.onAddRef}
+          onRemoveRef={nodeLinkPopover.onRemoveRef}
+          onNavigateTo={(pageIndex, nodeId, filePath) => {
+            if (filePath && filePath !== currentSavePath) {
+              setNodeLinkPopover(null);
+              void handleOpenWorkspaceFile(filePath, pageIndex);
+              return;
+            }
+            handleSelectPage(pageIndex + 1);
+            selectNode(nodeId);
+            setNodeLinkPopover(null);
+          }}
+          onClose={() => setNodeLinkPopover(null)}
+        />
+      ) : null}
+      {nodeLinkPicker ? (
+        <div className="modal-backdrop" onPointerDown={handleCancelNodeLinkPicker}>
+          <div className="node-link-picker" onPointerDown={(event) => event.stopPropagation()} style={{ width: 440, maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+              <strong style={{ fontSize: 15 }}>选择要引用的节点</strong>
+              <button type="button" onClick={handleCancelNodeLinkPicker} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#64748b' }}>×</button>
+            </div>
+            {/* Tab bar */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
+              <button type="button" onClick={() => setExternalDocPickerTab("current")}
+                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "current" ? 700 : 400, color: externalDocPickerTab === "current" ? '#0f172a' : '#64748b', borderBottom: externalDocPickerTab === "current" ? '2px solid #6366f1' : '2px solid transparent' }}>
+                当前文档
+              </button>
+              <button type="button" onClick={async () => {
+                setExternalDocPickerTab("external");
+                if (!externalDocNodes && window.electronApp?.listExternalDocumentNodes) {
+                  setExternalDocsLoading(true);
+                  try {
+                    const otherDocs = workspaceDocumentSummaries.filter(d => d.filePath !== currentSavePath);
+                    const results = await Promise.all(
+                      otherDocs.map(d => window.electronApp!.listExternalDocumentNodes!({ filePath: d.filePath }).catch(() => null))
+                    );
+                    setExternalDocNodes(results.filter(Boolean) as unknown as typeof externalDocNodes);
+                  } catch {} finally {
+                    setExternalDocsLoading(false);
+                  }
+                }
+              }}
+                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "external" ? 700 : 400, color: externalDocPickerTab === "external" ? '#0f172a' : '#64748b', borderBottom: externalDocPickerTab === "external" ? '2px solid #6366f1' : '2px solid transparent' }}>
+                其他文档
+              </button>
+            </div>
+            {/* Search input */}
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e2e8f0' }}>
+              <input
+                type="text"
+                value={linkPickerSearch}
+                onChange={(e) => setLinkPickerSearch(e.currentTarget.value)}
+                placeholder="搜索节点或文本块..."
+                autoFocus
+                style={{ width: '100%', padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 4, fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ overflowY: 'auto', padding: 8 }}>
+              {externalDocPickerTab === "current" && (() => {
+                const searchLower = linkPickerSearch.trim().toLowerCase();
+                const filteredNodes = searchLower
+                  ? documentFile.nodes.filter((n) => {
+                      let text = n.id;
+                      if (n.type === "text" && "content" in n) {
+                        const firstPara = n.content.content.find((b) => b.type === "paragraph");
+                        if (firstPara) text = firstPara.content.map((i) => i.type === "text" ? i.text : "").join("");
+                      } else if (n.type === "timeline") {
+                        text = n.entries[0]?.category ?? n.id;
+                      }
+                      return text.toLowerCase().includes(searchLower);
+                    })
+                  : documentFile.nodes;
+                const items: Array<{ key: string; pageIndex: number; nodeId: string; displayName: string; sub: string; docPath?: string; paragraphIndex?: number }> = [];
+                for (const n of filteredNodes) {
+                  let displayName = n.id;
+                  let sub: string = n.type;
+                  if (n.type === "text" && "content" in n) {
+                    const paras = n.content.content.filter((b) => b.type === "paragraph");
+                    const firstPara = paras[0];
+                    if (firstPara) {
+                      const t = firstPara.content.map((i) => i.type === "text" ? i.text : "").join("").trim().slice(0, 50);
+                      if (t) displayName = t;
+                    }
+                    sub = `${n.type} · ${paras.length} 段`;
+                    if (searchLower) {
+                      // Show matching paragraphs as separate items
+                      paras.forEach((p, pi) => {
+                        const ptext = p.content.map((i) => i.type === "text" ? i.text : "").join("").trim();
+                        if (ptext && (!searchLower || ptext.toLowerCase().includes(searchLower))) {
+                          items.push({
+                            key: `${n.id}-p${pi}`,
+                            pageIndex: n.pageIndex,
+                            nodeId: n.id,
+                            displayName: ptext.slice(0, 60),
+                            sub: `段落 ${pi + 1}`,
+                            paragraphIndex: pi,
+                          });
+                        }
+                      });
+                      continue; // Skip node-level entry when showing paragraph matches
+                    }
+                  } else if (n.type === "timeline") {
+                    displayName = n.entries[0]?.category ?? "时间线";
+                    sub = `${n.entries.length} 个条目`;
+                  }
+                  items.push({
+                    key: n.id,
+                    pageIndex: n.pageIndex,
+                    nodeId: n.id,
+                    displayName,
+                    sub,
+                  });
+                }
+                if (items.length === 0) {
+                  return <div style={{ padding: 16, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>无匹配结果</div>;
+                }
+                return items.map((item) => (
+                  <button key={item.key} type="button"
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', borderBottom: '1px solid #f1f5f9', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#0f172a' }}
+                    onClick={() => handlePickNodeForLink(item.pageIndex, item.nodeId, item.docPath, item.paragraphIndex)}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.displayName}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{item.sub}</div>
+                  </button>
+                ));
+              })()}
+              {externalDocPickerTab === "external" && (
+                externalDocsLoading ? (
+                  <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>加载中...</div>
+                ) : externalDocNodes && externalDocNodes.length > 0 ? (
+                  (() => {
+                    const searchLower = linkPickerSearch.trim().toLowerCase();
+                    const docPageMap = new Map<string, { fileName: string; filePath: string; pages: Map<number, { pageTitle: string; nodes: { id: string; type: string }[] }> }>();
+                    for (const doc of externalDocNodes) {
+                      const summary = workspaceDocumentSummaries.find(s => s.filePath === doc.filePath);
+                      const pages = new Map<number, { pageTitle: string; nodes: { id: string; type: string }[] }>();
+                      for (const n of doc.nodes) {
+                        let pageTitle = `第 ${n.pageIndex + 1} 页`;
+                        if (summary) {
+                          const pageInfo = summary.pages.find(p => p.index === n.pageIndex);
+                          if (pageInfo?.title) pageTitle = pageInfo.title;
+                        }
+                        if (!pages.has(n.pageIndex)) pages.set(n.pageIndex, { pageTitle, nodes: [] });
+                        pages.get(n.pageIndex)!.nodes.push({ id: n.id, type: n.type });
+                      }
+                      if (searchLower) {
+                        const docNameMatch = doc.fileName.toLowerCase().includes(searchLower);
+                        const matchedPages = new Map<number, { pageTitle: string; nodes: { id: string; type: string }[] }>();
+                        for (const [pi, pg] of pages) {
+                          const titleMatch = pg.pageTitle.toLowerCase().includes(searchLower);
+                          const matchedNodes = pg.nodes.filter(n => n.id.toLowerCase().includes(searchLower) || n.type.toLowerCase().includes(searchLower));
+                          if (titleMatch || matchedNodes.length > 0) {
+                            matchedPages.set(pi, { ...pg, nodes: titleMatch ? pg.nodes : matchedNodes });
+                          }
+                        }
+                        if (docNameMatch) docPageMap.set(doc.filePath, { fileName: doc.fileName, filePath: doc.filePath, pages });
+                        else if (matchedPages.size > 0) docPageMap.set(doc.filePath, { fileName: doc.fileName, filePath: doc.filePath, pages: matchedPages });
+                      } else {
+                        docPageMap.set(doc.filePath, { fileName: doc.fileName, filePath: doc.filePath, pages });
+                      }
+                    }
+                    if (docPageMap.size === 0) {
+                      return <div style={{ padding: 16, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>无匹配结果</div>;
+                    }
+                    const result: React.ReactNode[] = [];
+                    let docIdx = 0;
+                    for (const [filePath, docInfo] of docPageMap) {
+                      const isDocExpanded = expandedExternalDocs.has(filePath);
+                      result.push(
+                        <button key={`doc-${docIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderBottom: '1px solid #f1f5f9', background: '#f8fafc', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#0f172a' }}
+                          onClick={() => { setExpandedExternalDocs(prev => { const n = new Set(prev); if (n.has(filePath)) n.delete(filePath); else n.add(filePath); return n; }); }}>
+                          <span style={{ fontSize: 11, color: '#94a3b8', width: 12 }}>{isDocExpanded ? '▾' : '▸'}</span>
+                          <span>{docInfo.fileName}</span>
+                        </button>
+                      );
+                      if (isDocExpanded) {
+                        const pageEntries = Array.from(docInfo.pages.entries()).sort(([a], [b]) => a - b);
+                        for (const [pageIdx, pageInfo] of pageEntries) {
+                          const expandedPages = expandedExternalDocPages[filePath] ?? new Set();
+                          const isPageExpanded = expandedPages.has(pageIdx);
+                          result.push(
+                            <button key={`page-${docIdx}-${pageIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '4px 8px 4px 28px', border: 'none', borderBottom: '1px solid #f1f5f9', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#475569' }}
+                              onClick={() => { setExpandedExternalDocPages(prev => { const np = new Set(prev[filePath] ?? []); if (np.has(pageIdx)) np.delete(pageIdx); else np.add(pageIdx); return { ...prev, [filePath]: np }; }); }}>
+                              <span style={{ fontSize: 10, color: '#94a3b8', width: 12 }}>{isPageExpanded ? '▾' : '▸'}</span>
+                              <span>{pageInfo.pageTitle}</span>
+                              <span style={{ fontSize: 10, color: '#94a3b8' }}>({pageInfo.nodes.length})</span>
+                            </button>
+                          );
+                          if (isPageExpanded) {
+                            for (const nodeInfo of pageInfo.nodes) {
+                              let displayName = `${nodeInfo.type}: ${nodeInfo.id.slice(0, 30)}`;
+                              result.push(
+                                <button key={`node-${docIdx}-${pageIdx}-${nodeInfo.id}`} type="button" style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px 4px 44px', border: 'none', borderBottom: '1px solid #f8fafc', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#2563eb' }}
+                                  onClick={() => handlePickNodeForLink(pageIdx, nodeInfo.id, filePath)}
+                                  onMouseEnter={(e) => (e.currentTarget.style.background = '#eff6ff')}
+                                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                                  {displayName}
+                                </button>
+                              );
+                            }
+                          }
+                        }
+                      }
+                      docIdx++;
+                    }
+                    return result;
+                  })()
+                ) : (
+                  <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>没有其他文档</div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {markdownDialog ? (
         <div className="modal-backdrop" onPointerDown={() => setMarkdownDialog(null)}>
           <div className="markdown-dialog" onPointerDown={(event) => event.stopPropagation()}>
@@ -3642,6 +4438,30 @@ export const App = () => {
           }}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          {canvasContextMenu.nodeId && (
+            <button
+              type="button"
+              className="sidebar-context-menu-item"
+              onClick={() => {
+                const { x, y, nodeId } = canvasContextMenu;
+                setCanvasContextMenu(null);
+                if (nodeId) {
+                  // If the node is a timeline, add ref to the first entry without one
+                  const targetNode = documentFile.nodes.find(n => n.id === nodeId);
+                  if (targetNode?.type === "timeline") {
+                    const entryIndex = targetNode.entries.findIndex(e => !e.nodeRef);
+                    if (entryIndex >= 0) {
+                      handleRequestInsertTimelineRef(nodeId, entryIndex, x, y);
+                    }
+                  } else {
+                    handleRequestInsertNodeLink(nodeId, x, y);
+                  }
+                }
+              }}
+            >
+              添加引用
+            </button>
+          )}
           <button
             type="button"
             className="sidebar-context-menu-item"
@@ -3953,6 +4773,8 @@ export const App = () => {
               onRefresh={() => {
                 refreshWorkspaceEntries().catch(() => {});
               }}
+              selectedFilePaths={selectedFilePaths}
+              onSelectFile={handleFileSelect}
             />
           ) : null}
           {!fileSidebarCollapsed && leftSidebarMode === "graph" ? (
@@ -4160,7 +4982,7 @@ export const App = () => {
           handleDropTextAt(point.x, point.y, plainText);
         }}
         onContextMenu={(event) => {
-          if (isCanvasNodeTarget(event.target) || isEditableTarget(event.target)) {
+          if (isEditableTarget(event.target)) {
             return;
           }
 
@@ -4171,12 +4993,14 @@ export const App = () => {
 
           event.preventDefault();
           const point = toWorldPoint(event.clientX, event.clientY, rect, documentFile.viewState);
+          const nodeId = getCanvasNodeIdFromTarget(event.target);
           setSidebarContextMenu(null);
           setCanvasContextMenu({
             x: event.clientX,
             y: event.clientY,
             worldX: point.x,
             worldY: point.y,
+            ...(nodeId ? { nodeId } : {}),
           });
         }}
         onClick={() => {
@@ -4368,9 +5192,11 @@ export const App = () => {
                       : current);
                   }}
                   assets={documentFile.assets}
-                  onNavigateTo={(pageIndex, nodeId) => {
-                    handleSelectPage(pageIndex + 1);
-                    selectNode(nodeId);
+                  onRequestInsertTimelineRef={(timelineNodeId, entryIndex, x, y) => {
+                    handleRequestInsertTimelineRef(timelineNodeId, entryIndex, x, y);
+                  }}
+                  onOpenTimelineRefPopover={(entry, entryIndex, timelineNodeId, x, y) => {
+                    handleOpenTimelineRefPopover(entry, entryIndex, timelineNodeId, x, y);
                   }}
                 />
               );
@@ -4436,6 +5262,13 @@ export const App = () => {
                     onDragHandlePointerDown={(event) => startNodeDrag(event, node)}
                     onMiddlePanPointerDown={startCanvasPan}
                     onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                    onNavigateTo={(pageIndex, nodeId) => {
+                      handleSelectPage(pageIndex + 1);
+                      selectNode(nodeId);
+                    }}
+                    onNodeLinkClick={handleNodeLinkClick}
+                    onRequestInsertNodeLink={(x, y) => node.id === editingNodeId && handleRequestInsertNodeLink(node.id, x, y)}
+                    highlightQuery={highlightQuery}
                   />
                 );
               }
@@ -4444,6 +5277,7 @@ export const App = () => {
                 return (
                   <ShapeNode
                     key={node.id}
+                    highlightQuery={highlightQuery}
                     node={node}
                     selected={selectedNodeIds.includes(node.id)}
                     onSelect={() => selectNode(node.id)}

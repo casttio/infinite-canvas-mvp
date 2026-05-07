@@ -8,6 +8,7 @@ type PointerLikeEvent = Pick<PointerEvent, "clientX" | "clientY" | "preventDefau
 interface ShapeNodeProps {
   node: ShapeNodeType;
   selected: boolean;
+  highlightQuery?: string;
   onSelect: () => void;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
@@ -17,6 +18,7 @@ interface ShapeNodeProps {
 export const ShapeNode = ({
   node,
   selected,
+  highlightQuery,
   onSelect,
   onPointerDown,
   onResizePointerDown,
@@ -51,7 +53,7 @@ export const ShapeNode = ({
     {node.label ? (
       <div
         className="shape-node-label"
-        dangerouslySetInnerHTML={{ __html: richTextDocToHtml(node.label, {}) }}
+        dangerouslySetInnerHTML={{ __html: richTextDocToHtml(node.label, {}, highlightQuery) }}
       />
     ) : null}
     {selected ? (

@@ -8,6 +8,7 @@ if (process.platform === "linux") {
   app.commandLine.appendSwitch("no-sandbox");
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("in-process-gpu");
+  app.commandLine.appendSwitch("disable-features", "MiddleClickAutoscroll");
   app.disableHardwareAcceleration();
 }
 
@@ -33,15 +34,22 @@ const ensureDefaultWorkspaceDir = async () => {
   return workspacePath;
 };
 
+const ensureDocumentsDir = async () => {
+  const rootPath = await ensureDefaultWorkspaceDir();
+  const docsPath = path.join(rootPath, "Documents");
+  await fs.mkdir(docsPath, { recursive: true });
+  return docsPath;
+};
+
 const getDefaultDocumentPath = async (defaultFileName) =>
-  path.join(await ensureDefaultWorkspaceDir(), defaultFileName);
+  path.join(await ensureDocumentsDir(), defaultFileName);
 
 const getDialogStartPath = async (filePath) => {
   if (typeof filePath === "string" && filePath.length > 0) {
     return path.dirname(filePath);
   }
 
-  return ensureDefaultWorkspaceDir();
+  return ensureDocumentsDir();
 };
 
 const isSupportedDocumentPath = (filePath) =>
@@ -322,32 +330,42 @@ const extractEmbeddedDocumentJson = (rawText) => {
   return match?.[2] ?? null;
 };
 
+const getDocumentJsonSource = (rawText) => {
+  const normalized = rawText.trimStart();
+  const lowerNormalized = normalized.toLowerCase();
+  if (lowerNormalized.startsWith("<!doctype html") || lowerNormalized.startsWith("<html")) {
+    return extractEmbeddedDocumentJson(rawText);
+  }
+  return normalized.startsWith("{") || normalized.startsWith("[") ? rawText : null;
+};
+
+const parseDocumentDataFromRawText = (rawText) => {
+  const jsonSource = getDocumentJsonSource(rawText);
+  if (!jsonSource) {
+    return null;
+  }
+  const parsed = JSON.parse(jsonSource);
+  return parsed && typeof parsed === "object" ? parsed : null;
+};
+
 const summarizeDocumentFile = async (rootPath, filePath) => {
   const fileName = path.basename(filePath);
   const relativePath = path.relative(rootPath, filePath);
 
   try {
     const rawText = await fs.readFile(filePath, "utf8");
-    const normalized = rawText.trimStart();
-    const jsonSource = normalized.startsWith("<!doctype html")
-      || normalized.startsWith("<!DOCTYPE html")
-      || normalized.startsWith("<html")
-      ? extractEmbeddedDocumentJson(rawText)
-      : (normalized.startsWith("{") || normalized.startsWith("[") ? rawText : null);
+    const parsed = parseDocumentDataFromRawText(rawText);
 
-    if (jsonSource) {
-      const parsed = JSON.parse(jsonSource);
-      if (parsed && typeof parsed === "object") {
-        const pages = getPagesFromDocumentData(parsed, fileName);
-        return {
-          filePath,
-          fileName,
-          relativePath,
-          pageCount: pages.length,
-          pages,
-          updatedAt: typeof parsed?.meta?.updatedAt === "string" ? parsed.meta.updatedAt : undefined,
-        };
-      }
+    if (parsed) {
+      const pages = getPagesFromDocumentData(parsed, fileName);
+      return {
+        filePath,
+        fileName,
+        relativePath,
+        pageCount: pages.length,
+        pages,
+        updatedAt: typeof parsed?.meta?.updatedAt === "string" ? parsed.meta.updatedAt : undefined,
+      };
     }
   } catch (error) {
     console.warn("Failed to summarize document", filePath, error);
@@ -677,7 +695,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("document:open", async () => {
     const result = await dialog.showOpenDialog({
-      defaultPath: await ensureDefaultWorkspaceDir(),
+      defaultPath: await ensureDocumentsDir(),
       properties: ["openFile"],
       filters: [
         { name: "Supported Documents", extensions: ["html", "htm", "json", "txt", "md", "xml", "one", "onetoc2"] },
@@ -789,7 +807,7 @@ app.whenReady().then(() => {
       throw new Error("只能删除文件。");
     }
 
-    await fs.rm(resolvedPath);
+    await trashFile(resolvedPath);
   });
 
   ipcMain.handle("workspace:create-directory", async (_event, options = {}) => {
@@ -849,7 +867,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("workspace:list", async () => {
-    const rootPath = await ensureDefaultWorkspaceDir();
+    const rootPath = await ensureDocumentsDir();
 
     return {
       rootPath,
@@ -858,7 +876,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("workspace:document-summaries", async () => {
-    const rootPath = await ensureDefaultWorkspaceDir();
+    const rootPath = await ensureDocumentsDir();
 
     return {
       rootPath,
@@ -955,5 +973,336 @@ app.on("window-all-closed", () => {
   }
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+// ─── Trash helpers ────────────────────────────────────────────────
+const getTrashDir = async () => {
+  const rootPath = await ensureDefaultWorkspaceDir();
+  const trashPath = path.join(rootPath, "Trash");
+  await fs.mkdir(trashPath, { recursive: true });
+  return trashPath;
+};
+
+const trashFile = async (srcPath) => {
+  const trashDir = await getTrashDir();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const baseName = path.basename(srcPath);
+  const destName = `${timestamp}_${baseName}`;
+  const destPath = path.join(trashDir, destName);
+  await fs.cp(srcPath, destPath, { recursive: false });
+  await fs.rm(srcPath, { force: true });
+  return destPath;
+};
+
+ipcMain.handle("trash:list", async () => {
+  const trashDir = await getTrashDir();
+  const entries = await fs.readdir(trashDir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const filePath = path.join(trashDir, entry.name);
+    const stats = await fs.stat(filePath);
+    files.push({
+      name: entry.name,
+      path: filePath,
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+    });
+  }
+  // Sort by mtime descending (newest first)
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return files;
+});
+
+ipcMain.handle("trash:restore", async (_event, options = {}) => {
+  const filePath = typeof options.filePath === "string" && options.filePath.length > 0 ? options.filePath : "";
+  if (!filePath) throw new Error("文件路径无效。");
+
+  const trashDir = await getTrashDir();
+  if (!isPathInside(trashDir, filePath)) throw new Error("只能还原回收站中的文件。");
+
+  const baseName = path.basename(filePath);
+  // Strip timestamp prefix: "2026-05-06T12-34-56_originalname.icanvas.html"
+  const originalName = baseName.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_/, "");
+  const docsDir = await ensureDocumentsDir();
+  const targetPath = path.join(docsDir, originalName);
+
+  await fs.cp(filePath, targetPath, { recursive: false });
+  await fs.rm(filePath, { force: true });
+  return { restoredPath: targetPath, originalName };
+});
+
+ipcMain.handle("trash:delete-all", async () => {
+  const trashDir = await getTrashDir();
+  await fs.rm(trashDir, { recursive: true, force: true });
+  await fs.mkdir(trashDir, { recursive: true });
+});
+
+ipcMain.handle("trash:save-document", async (_event, options = {}) => {
+  const content = typeof options.content === "string" ? options.content : "";
+  const baseName = typeof options.baseName === "string" ? options.baseName : "untitled.icanvas.json";
+  if (!content) throw new Error("内容无效。");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const trashDir = await getTrashDir();
+  const destName = `${timestamp}_${baseName}`;
+  const destPath = path.join(trashDir, destName);
+  await fs.writeFile(destPath, content, "utf8");
+  return destPath;
+});
+
+ipcMain.handle("document:list-external-nodes", async (_event, options = {}) => {
+  const filePath = typeof options.filePath === "string" ? options.filePath : "";
+  if (!filePath) {
+    return [];
+  }
+  try {
+    const payload = await readDocumentPayload(filePath);
+    const parsed = parseDocumentDataFromRawText(payload.rawText);
+    const nodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
+    const summaries = nodes.flatMap((node) => {
+      if (!node || typeof node !== "object") {
+        return [];
+      }
+      const id = typeof node.id === "string" ? node.id : "";
+      const type = typeof node.type === "string" ? node.type : "";
+      const pageIndex = Number.isInteger(node.pageIndex) ? node.pageIndex : 0;
+      return id && type ? [{ id, pageIndex, type }] : [];
+    });
+    return { filePath, fileName: path.basename(filePath), nodes: summaries };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("document:read-node-preview", async (_event, options = {}) => {
+  const filePath = typeof options.filePath === "string" ? options.filePath : "";
+  const nodeId = typeof options.nodeId === "string" ? options.nodeId : "";
+  if (!filePath || !nodeId) {
+    return null;
+  }
+  try {
+    const payload = await readDocumentPayload(filePath);
+    const parsed = parseDocumentDataFromRawText(payload.rawText);
+    const nodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
+    const node = nodes.find((candidate) => candidate && typeof candidate === "object" && candidate.id === nodeId);
+    if (!node) return null;
+
+    const type = typeof node.type === "string" ? node.type : "unknown";
+
+    let title = nodeId;
+    let preview = "";
+
+    let content = undefined;
+    let usedAssetIds = new Set();
+    if (type === "text") {
+      const blocks = Array.isArray(node.content?.content) ? node.content.content : [];
+      content = blocks;
+      const text = blocks
+        .flatMap((block) => Array.isArray(block?.content) ? block.content : [])
+        .filter((inline) => inline?.type === "text" && typeof inline.text === "string")
+        .map((inline) => inline.text)
+        .join("")
+        .trim();
+      if (text) {
+        title = text.slice(0, 60);
+        preview = text.slice(0, 200);
+      }
+    } else if (type === "shape" && node.label && Array.isArray(node.label.content)) {
+      content = node.label.content;
+      const text = content
+        .flatMap((b) => Array.isArray(b?.content) ? b.content : [])
+        .filter((inline) => inline?.type === "text" && typeof inline.text === "string")
+        .map((inline) => inline.text)
+        .join("")
+        .trim();
+      if (text) {
+        title = text.slice(0, 60);
+        preview = text.slice(0, 200);
+      }
+    } else if (type === "timeline") {
+      const entries = Array.isArray(node.entries) ? node.entries : [];
+      const category = entries.find((entry) => typeof entry?.category === "string")?.category;
+      if (category) title = category;
+    }
+
+    // Collect used asset IDs from content blocks
+    if (content && Array.isArray(content)) {
+      content.forEach((block) => {
+        if (Array.isArray(block?.content)) {
+          block.content.forEach((inline) => {
+            if (inline?.type === "image" && typeof inline.assetId === "string") {
+              usedAssetIds.add(inline.assetId);
+            }
+          });
+        }
+      });
+    }
+
+    // Filter assets to only those needed
+    let assets = undefined;
+    if (usedAssetIds.size > 0 && parsed?.assets && typeof parsed.assets === "object") {
+      assets = {};
+      usedAssetIds.forEach((aid) => {
+        if (parsed.assets[aid]) {
+          assets[aid] = parsed.assets[aid];
+        }
+      });
+    }
+
+    return {
+      pageIndex: Number.isInteger(node.pageIndex) ? node.pageIndex : 0,
+      nodeId,
+      type,
+      title,
+      preview,
+      content,
+      assets,
+    };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("document:search-workspace", async (_event, options = {}) => {
+  const query = typeof options.query === "string" ? options.query.trim() : "";
+  const currentPath = typeof options.currentPath === "string" ? options.currentPath : "";
+  if (!query) {
+    return [];
+  }
+
+  const lowerQuery = query.toLowerCase();
+  const rootPath = await ensureDefaultWorkspaceDir();
+
+  const collectTexts = (blocks) => {
+    const texts = [];
+    if (!Array.isArray(blocks)) return texts;
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type === "paragraph" && Array.isArray(block.content)) {
+        const text = block.content
+          .map((inline) => inline?.type === "text" && typeof inline.text === "string" ? inline.text : "")
+          .join("");
+        if (text.trim()) texts.push(text);
+      } else if (block.type === "table" && Array.isArray(block.rows)) {
+        for (const row of block.rows) {
+          if (!row || !Array.isArray(row.cells)) continue;
+          for (const cell of row.cells) {
+            if (cell && Array.isArray(cell.content)) {
+              texts.push(...collectTexts(cell.content));
+            }
+          }
+        }
+      }
+    }
+    return texts;
+  };
+
+  const getAllDocs = async (dirPath, results) => {
+    let entries;
+    try {
+      entries = await fs.readdir(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await getAllDocs(fullPath, results);
+      } else if (entry.isFile() && isSupportedDocumentPath(fullPath)) {
+        try {
+          const rawText = await fs.readFile(fullPath, "utf8");
+          const parsed = parseDocumentDataFromRawText(rawText);
+          if (!parsed) continue;
+          results.push({
+            filePath: fullPath,
+            fileName: path.basename(fullPath),
+            nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
+          });
+        } catch {
+          // skip unreadable docs
+        }
+      }
+    }
+  };
+
+  try {
+    const docs = [];
+    await getAllDocs(rootPath, docs);
+
+    const output = [];
+    const MAX_RESULTS = 100;
+
+    for (const doc of docs) {
+      for (const node of doc.nodes) {
+        if (!node || typeof node !== "object") continue;
+        const nodeId = typeof node.id === "string" ? node.id : "";
+        const nodeType = typeof node.type === "string" ? node.type : "";
+        const pageIndex = Number.isInteger(node.pageIndex) ? node.pageIndex : 0;
+        if (!nodeId) continue;
+
+        let texts = [];
+        let title = nodeId;
+
+        if (nodeType === "text" && node.content && Array.isArray(node.content.content)) {
+          texts = collectTexts(node.content.content);
+          if (texts.length > 0) title = texts[0].slice(0, 60);
+        } else if (nodeType === "shape" && node.label && Array.isArray(node.label.content)) {
+          texts = collectTexts(node.label.content);
+          if (texts.length > 0) title = texts[0].slice(0, 60);
+        } else if (nodeType === "timeline" && Array.isArray(node.entries)) {
+          for (const entry of node.entries) {
+            if (!entry || typeof entry !== "object") continue;
+            if (typeof entry.title === "string") texts.push(entry.title);
+            if (typeof entry.summary === "string") texts.push(entry.summary);
+            if (typeof entry.category === "string") texts.push(entry.category);
+            if (Array.isArray(entry.tags)) texts.push(...entry.tags.filter((t) => typeof t === "string"));
+            if (typeof entry.authors === "string") texts.push(entry.authors);
+          }
+          title = node.entries.find((e) => typeof e?.category === "string")?.category || title;
+        } else if (nodeType === "image") {
+          texts = [nodeId];
+        }
+
+        // Search in texts
+        for (const text of texts) {
+          const lower = text.toLowerCase();
+          let pos = 0;
+          while (pos < lower.length) {
+            const idx = lower.indexOf(lowerQuery, pos);
+            if (idx === -1) break;
+            const snippetStart = Math.max(0, idx - 30);
+            const snippetEnd = Math.min(text.length, idx + query.length + 30);
+            const snippet = (snippetStart > 0 ? "…" : "") +
+              text.slice(snippetStart, snippetEnd) +
+              (snippetEnd < text.length ? "…" : "");
+
+            output.push({
+              id: `${doc.filePath}-${nodeId}-${output.length}`,
+              scope: "workspace",
+              filePath: doc.filePath,
+              fileName: doc.fileName,
+              pageIndex,
+              nodeId,
+              nodeType,
+              title,
+              snippet,
+              matchStart: idx,
+              matchEnd: idx + query.length,
+            });
+
+            pos = idx + 1;
+            if (output.length >= MAX_RESULTS) {
+              return output;
+            }
+          }
+        }
+      }
+    }
+
+    return output;
+  } catch {
+    return [];
   }
 });

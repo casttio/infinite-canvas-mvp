@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { MAX_ZOOM_SLIDER_VALUE, sliderValueToZoom, zoomToSliderValue } from "../editor/viewport";
 
 const FONT_OPTIONS = [
@@ -11,7 +11,7 @@ const FONT_OPTIONS = [
 ];
 
 const FONT_SIZE_OPTIONS = ["11", "12", "14", "16", "18", "24", "32"];
-type ToolbarTab = "file" | "home" | "insert" | "table";
+type ToolbarTab = "file" | "search" | "home" | "insert" | "table";
 type ConnectorStyleControls = {
   stroke: string;
   strokeWidth: number;
@@ -64,6 +64,22 @@ const readBlockStylePresets = () => {
   }
 };
 
+export type SearchScope = "current-page" | "current-document" | "workspace";
+
+interface SearchResultRow {
+  id: string;
+  scope: SearchScope;
+  filePath?: string;
+  fileName?: string;
+  pageIndex: number;
+  nodeId: string;
+  nodeType: string;
+  title: string;
+  snippet: string;
+  matchStart: number;
+  matchEnd: number;
+}
+
 interface ToolbarProps {
   zoom: number;
   dirty: boolean;
@@ -76,6 +92,7 @@ interface ToolbarProps {
   onNewDocument: () => void;
   onOpenDocument: () => void;
   onSaveDocument: () => void;
+  onOpenTrash: () => void;
   onSaveAsDocument: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -121,6 +138,16 @@ interface ToolbarProps {
   onSetGridColor: (color: string) => void;
   onSetGridSize: (size: number) => void;
   onZoomChange: (zoom: number) => void;
+  // Search props
+  searchQuery: string;
+  searchScope: SearchScope;
+  searchResults: SearchResultRow[];
+  searchActiveIndex: number;
+  onSearchChange: (query: string) => void;
+  onSearchScopeChange: (scope: SearchScope) => void;
+  onSearchResultClick: (result: SearchResultRow) => void;
+  onSearchKeyDown: (event: ReactKeyboardEvent) => void;
+  onSearchClose: () => void;
 }
 
 export const Toolbar = ({
@@ -135,6 +162,7 @@ export const Toolbar = ({
   onNewDocument,
   onOpenDocument,
   onSaveDocument,
+  onOpenTrash,
   onSaveAsDocument,
   onUndo,
   onRedo,
@@ -173,6 +201,15 @@ export const Toolbar = ({
   onSetGridColor,
   onSetGridSize,
   onZoomChange,
+  searchQuery,
+  searchScope,
+  searchResults,
+  searchActiveIndex,
+  onSearchChange,
+  onSearchScopeChange,
+  onSearchResultClick,
+  onSearchKeyDown,
+  onSearchClose,
 }: ToolbarProps) => {
   const [activeTab, setActiveTab] = useState<ToolbarTab>("home");
   const [fontFamily, setFontFamily] = useState(FONT_OPTIONS[0].value);
@@ -184,6 +221,8 @@ export const Toolbar = ({
   const [blockStylePresets, setBlockStylePresets] = useState(readBlockStylePresets);
   const [editingBlockStyleId, setEditingBlockStyleId] = useState(DEFAULT_BLOCK_STYLE_PRESETS[0].id);
   const blockStyleMenuRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLDivElement | null>(null);
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
 
   const closeBlockStyleMenu = () => {
@@ -217,6 +256,40 @@ export const Toolbar = ({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [showBlockStyleMenu]);
+
+  // Close search dropdown on outside click / Escape
+  useEffect(() => {
+    if (!searchDropdownOpen) return;
+    const handler = (e: PointerEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchDropdownOpen(false);
+      }
+    };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSearchDropdownOpen(false);
+    };
+    // Delay so the same click that opened it doesn't close it
+    requestAnimationFrame(() => {
+      window.addEventListener("pointerdown", handler, true);
+    });
+    window.addEventListener("keydown", keyHandler);
+    return () => {
+      window.removeEventListener("pointerdown", handler, true);
+      window.removeEventListener("keydown", keyHandler);
+    };
+  }, [searchDropdownOpen]);
+
+  // Auto-focus search input when the search tab is activated
+  useEffect(() => {
+    if (activeTab === "search") {
+      if (searchQuery.trim().length > 0) {
+        setSearchDropdownOpen(true);
+      }
+      requestAnimationFrame(() => {
+        searchRef.current?.querySelector<HTMLInputElement>(".toolbar-search-input")?.focus();
+      });
+    }
+  }, [activeTab, searchQuery]);
 
   const applyFontFamily = (value: string) => {
     setFontFamily(value);
@@ -272,6 +345,76 @@ export const Toolbar = ({
   });
 
   const renderSubToolbar = () => {
+    if (activeTab === "search") {
+      return (
+        <div className="toolbar-search" ref={searchRef}>
+          <input
+            type="search"
+            className="toolbar-search-input"
+            placeholder="搜索…"
+            value={searchQuery}
+            onChange={(e) => {
+              onSearchChange(e.currentTarget.value);
+              setSearchDropdownOpen(true);
+            }}
+            onFocus={() => setSearchDropdownOpen(true)}
+            onKeyDown={(e) => {
+              onSearchKeyDown(e);
+              if (e.key === "Escape") {
+                setSearchDropdownOpen(false);
+              }
+            }}
+          />
+          <select
+            className="toolbar-search-scope"
+            value={searchScope}
+            onChange={(e) => onSearchScopeChange(e.currentTarget.value as SearchScope)}
+          >
+            <option value="current-page">当前页</option>
+            <option value="current-document">当前文档</option>
+            <option value="workspace">工作区</option>
+          </select>
+          {searchQuery.trim().length > 0 && (
+            <button type="button" className="toolbar-search-close" onClick={onSearchClose}>×</button>
+          )}
+          {searchQuery.trim().length > 0 && searchDropdownOpen && (
+            <div className="toolbar-search-dropdown">
+              {searchResults.length > 0 ? (
+                <>
+                  <div className="toolbar-search-dropdown-info">
+                    {searchResults.length >= 100 ? "前 100 个结果" : `${searchResults.length} 个结果`}
+                  </div>
+                  {searchResults.slice(0, 50).map((result, idx) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      className={`toolbar-search-result ${idx === searchActiveIndex ? "active" : ""}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        onSearchResultClick(result);
+                      }}
+                    >
+                      <div className="toolbar-search-result-header">
+                        <span className="toolbar-search-result-title">{result.title}</span>
+                        <span className="toolbar-search-result-scope">
+                          {result.scope === "workspace" && result.fileName ? result.fileName : `P${result.pageIndex + 1}`}
+                        </span>
+                      </div>
+                      <div className="toolbar-search-result-snippet">
+                        {result.snippet}
+                      </div>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <div className="toolbar-search-empty">无结果</div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (activeTab === "file") {
       return (
         <div className="toolbar-group">
@@ -279,6 +422,7 @@ export const Toolbar = ({
           <button type="button" className="toolbar-button" onClick={onOpenDocument}>打开</button>
           <button type="button" className="toolbar-button primary" onClick={onSaveDocument}>保存</button>
           <button type="button" className="toolbar-button" onClick={onSaveAsDocument}>另存为</button>
+          <button type="button" className="toolbar-button" onClick={onOpenTrash}>回收站</button>
         </div>
       );
     }
@@ -664,6 +808,7 @@ export const Toolbar = ({
       <div className="toolbar-tabs" role="tablist" aria-label="工具栏">
         {[
           { id: "file", label: "文件" },
+          { id: "search", label: "搜索" },
           { id: "home", label: "开始" },
           { id: "insert", label: "插入" },
           { id: "table", label: "表格" },

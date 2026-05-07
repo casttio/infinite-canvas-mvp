@@ -116,6 +116,25 @@ declare global {
         rootPath: string;
         documents: WorkspaceDocumentSummary[];
       }>;
+      listExternalDocumentNodes: (options: {
+        filePath: string;
+      }) => Promise<{
+        filePath: string;
+        fileName: string;
+        nodes: { id: string; pageIndex: number; type: string }[];
+      } | null>;
+      readExternalNodePreview: (options: {
+        filePath: string;
+        nodeId: string;
+      }) => Promise<{
+        pageIndex: number;
+        nodeId: string;
+        type: string;
+        title: string;
+        content?: import("./model/types").RichTextBlock[];
+        assets?: import("./model/types").AssetMap;
+        preview: string;
+      } | null>;
       pickAndImportAttachment: (options: {
         documentPath: string;
       }) => Promise<{
@@ -155,6 +174,26 @@ declare global {
         requestId: string;
         nodeId: string;
       }) => void) => () => void;
+      searchWorkspace: (options: {
+        query: string;
+        currentPath?: string;
+      }) => Promise<Array<{
+        id: string;
+        scope: "workspace";
+        filePath: string;
+        fileName: string;
+        pageIndex: number;
+        nodeId: string;
+        nodeType: string;
+        title: string;
+        snippet: string;
+        matchStart: number;
+        matchEnd: number;
+      }> | null>;
+      listTrashEntries: () => Promise<{ name: string; path: string; size: number; mtimeMs: number }[]>;
+      restoreTrashEntry: (options: { filePath: string }) => Promise<{ restoredPath: string; originalName: string }>;
+      emptyTrash: () => Promise<void>;
+      saveDocumentToTrash: (options: { content: string; baseName: string }) => Promise<string>;
       minimizeWindow: () => Promise<void>;
       toggleMaximizeWindow: () => Promise<boolean>;
       closeWindow: () => Promise<void>;

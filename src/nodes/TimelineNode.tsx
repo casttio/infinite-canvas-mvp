@@ -18,7 +18,8 @@ interface TimelineNodeProps {
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
   onHeightChange?: (h: number) => void;
   onEntriesChange?: (entries: TimelineNodeFields[]) => void;
-  onNavigateTo?: (pageIndex: number, nodeId: string) => void;
+  onRequestInsertTimelineRef?: (timelineNodeId: string, entryIndex: number, x: number, y: number) => void;
+  onOpenTimelineRefPopover?: (entry: TimelineNodeFields, entryIndex: number, timelineNodeId: string, x: number, y: number) => void;
 }
 
 const CATEGORY_COLORS = [
@@ -55,72 +56,37 @@ const formatEntryDate = (date: string, groupKey: string) => {
 const compareTimelineDateDesc = (left: string, right: string) =>
   right.localeCompare(left);
 
-const EntryPopover = ({ entry, x, y }: { entry: TimelineNodeFields; x: number; y: number }) => (
-  <div
-    className="timeline-popover"
-    style={{
-      position: "fixed",
-      left: Math.min(x, window.innerWidth - 320),
-      top: Math.min(y, window.innerHeight - 260),
-      zIndex: 9999,
-    }}
-  >
-    <div className="timeline-popover-header">
-      <strong>{entry.title}</strong>
-    </div>
-    {entry.summary && <p className="timeline-popover-summary">{entry.summary}</p>}
-    <div className="timeline-popover-meta">
-      {entry.org && <span>{entry.org}</span>}
-      {entry.authors && <span>{entry.authors}</span>}
-      {entry.tags && entry.tags.length > 0 && (
-        <div className="timeline-popover-tags">
-          {entry.tags.map((tag) => (
-            <span key={tag} className="timeline-popover-tag">{tag}</span>
-          ))}
-        </div>
-      )}
-    </div>
-    <div className="timeline-popover-links">
-      {entry.doi && <a href={entry.doi} target="_blank" rel="noreferrer">DOI</a>}
-      {entry.arxiv && <a href={entry.arxiv} target="_blank" rel="noreferrer">arXiv</a>}
-      {entry.link && <a href={entry.link} target="_blank" rel="noreferrer">链接</a>}
-    </div>
-  </div>
-);
-
 const EntryCard = ({
   entry,
   groupKey,
   density,
   categoryColor,
-  onNavigateTo,
+  onToggleDensity,
+  onOpenTimelineRefPopover,
+  onRequestInsertTimelineRef,
+  timelineNodeId,
+  entryIndex,
 }: {
   entry: TimelineNodeFields;
   groupKey: string;
   density: EntryDensityMode;
   categoryColor: string;
-  onNavigateTo?: (pageIndex: number, nodeId: string) => void;
+  onToggleDensity?: () => void;
+  onOpenTimelineRefPopover?: (entry: TimelineNodeFields, entryIndex: number, timelineNodeId: string, x: number, y: number) => void;
+  onRequestInsertTimelineRef?: (timelineNodeId: string, entryIndex: number, x: number, y: number) => void;
+  timelineNodeId?: string;
+  entryIndex?: number;
 }) => {
-  const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const refButtonRef = useRef<HTMLButtonElement>(null);
 
-  const handleMouseEnter = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setPopover({ x: rect.right + 8, y: rect.top });
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setPopover(null);
-  }, []);
-
-  const handleNavigate = useCallback((e: React.MouseEvent) => {
+  const handleOpenRefPopover = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (entry.nodeRef && onNavigateTo) {
-      onNavigateTo(entry.nodeRef.pageIndex, entry.nodeRef.nodeId);
-    }
-  }, [entry.nodeRef, onNavigateTo]);
+    const el = refButtonRef.current;
+    if (!el || !timelineNodeId || entryIndex === undefined || !onOpenTimelineRefPopover) return;
+    const rect = el.getBoundingClientRect();
+    onOpenTimelineRefPopover(entry, entryIndex, timelineNodeId, rect.right + 12, rect.top);
+  }, [entry, timelineNodeId, entryIndex, onOpenTimelineRefPopover]);
 
   const imp = entry.importance ?? 3;
   const entryDate = formatEntryDate(entry.date, groupKey);
@@ -129,22 +95,24 @@ const EntryCard = ({
     <div
       ref={ref}
       className={`timeline-entry-card ${density === "compact" ? "compact" : ""} ${imp >= 5 ? "milestone" : ""}`}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onClick={(e) => { e.stopPropagation(); onToggleDensity?.(); }}
+      style={{ cursor: "pointer" }}
     >
       <div className="timeline-entry-main">
         <div className="timeline-entry-text">
           <div className="timeline-entry-title-row">
             {entryDate && <span className="timeline-entry-date">{entryDate}</span>}
             <span className="timeline-entry-title">{entry.title}</span>
-            {entry.nodeRef && onNavigateTo && (
+            {entry.nodeRef && (
               <button
+                ref={refButtonRef}
                 type="button"
-                className="timeline-entry-nav"
-                onClick={handleNavigate}
-                title="跳转到关联节点"
+                className="timeline-entry-link-btn"
+                onClick={handleOpenRefPopover}
+                title="引用"
+                aria-label={`${entry.title} 引用`}
               >
-                👁
+                引用
               </button>
             )}
           </div>
@@ -164,9 +132,6 @@ const EntryCard = ({
           )}
         </div>
       </div>
-      {popover && density !== "detailed" && (
-        <EntryPopover entry={entry} x={popover.x} y={popover.y} />
-      )}
     </div>
   );
 };
@@ -180,21 +145,42 @@ export const TimelineNode = ({
   onResizePointerDown,
   onHeightChange,
   onEntriesChange,
-  onNavigateTo,
+  onRequestInsertTimelineRef,
+  onOpenTimelineRefPopover,
 }: TimelineNodeProps) => {
   const [density, setDensity] = useState<DensityMode>("auto");
+  const [entryOverrides, setEntryOverrides] = useState<Record<string, boolean>>({});
   const nodeRef = useRef<HTMLDivElement>(null);
   const lastMeasuredHRef = useRef(0);
 
   const category = node.entries[0]?.category ?? "";
   const categoryColor = getCategoryColor(category);
 
+  const handleToggleDensity = useCallback((entry: TimelineNodeFields) => {
+    setEntryOverrides((prev) => {
+      const key = `${entry.title}|${entry.date}`;
+      const current = prev[key];
+      // If currently forced, revert to global; otherwise force the opposite
+      if (current) {
+        const { [key]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [key]: true };
+    });
+  }, []);
+
   const getEffectiveDensity = useCallback((entry: TimelineNodeFields): EntryDensityMode => {
     if (density !== "auto") return density;
+    const key = `${entry.title}|${entry.date}`;
+    if (entryOverrides[key]) {
+      const imp = entry.importance ?? 3;
+      return imp >= 5 ? "compact" : "detailed";
+    }
     const imp = entry.importance ?? 3;
     if (imp >= 5) return "detailed";
     return "compact";
-  }, [density]);
+  }, [density, entryOverrides]);
+
 
   // Group by date for display
   const groupedEntries = useMemo(() => {
@@ -289,7 +275,11 @@ export const TimelineNode = ({
                 groupKey={groupKey}
                 density={getEffectiveDensity(entry)}
                 categoryColor={categoryColor}
-                onNavigateTo={onNavigateTo}
+                onToggleDensity={() => handleToggleDensity(entry)}
+                onOpenTimelineRefPopover={onOpenTimelineRefPopover}
+                onRequestInsertTimelineRef={onRequestInsertTimelineRef}
+                timelineNodeId={node.id}
+                entryIndex={node.entries.indexOf(entry)}
               />
             ))}
           </div>

@@ -33,6 +33,8 @@ interface FileSidebarProps {
   onCommitDirectoryRename: () => void;
   onCancelDirectoryRename: () => void;
   onRefresh: () => void;
+  selectedFilePaths?: string[];
+  onSelectFile?: (filePath: string, ctrlKey: boolean, shiftKey: boolean) => void;
 }
 
 const FILE_SUFFIXES = [".icanvas.html", ".icanvas.json", ".onetoc2", ".html", ".htm", ".json", ".txt", ".md", ".xml", ".one"];
@@ -521,6 +523,8 @@ export const FileSidebar = ({
   onCommitDirectoryRename,
   onCancelDirectoryRename,
   onRefresh,
+  selectedFilePaths = [],
+  onSelectFile,
 }: FileSidebarProps) => {
   const expandedSet = useMemo(() => new Set(expandedDirectories), [expandedDirectories]);
   const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
@@ -696,6 +700,7 @@ export const FileSidebar = ({
       }
 
       const active = currentFilePath === entry.path;
+      const multiSelected = selectedFilePaths.includes(entry.path);
       const renaming = renamingFilePath === entry.path;
 
       if (renaming) {
@@ -734,6 +739,7 @@ export const FileSidebar = ({
             "file-tree-row",
             "file",
             active ? "active" : "",
+            multiSelected ? "multi-selected" : "",
             draggingFilePath === entry.path ? "dragging" : "",
             dropTargetFile?.path === entry.path ? `drop-${dropTargetFile.placement}` : "",
           ].filter(Boolean).join(" ")}
@@ -759,7 +765,17 @@ export const FileSidebar = ({
             }
           }}
           onDrop={(event) => handleFileDrop(event, entry.path)}
-          onClick={() => onOpenFile(entry.path)}
+          onClick={(event) => {
+            if (onSelectFile && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelectFile(entry.path, event.ctrlKey || event.metaKey, event.shiftKey);
+              return;
+            }
+            // Plain click: set this file as the only selection and open
+            if (onSelectFile) onSelectFile(entry.path, false, false);
+            onOpenFile(entry.path);
+          }}
           onContextMenu={(event) => onFileContextMenu(event, entry.path, getEditableBaseName(entry.name))}
         >
           <span className="file-tree-bullet">•</span>

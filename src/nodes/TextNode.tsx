@@ -45,7 +45,8 @@ export interface TextEditorCommand {
     | "toggle-italic"
     | "toggle-underline"
     | "toggle-strike"
-    | "insert-timeline-example";
+    | "insert-timeline-example"
+    | "insert-node-link";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
@@ -66,6 +67,10 @@ export interface TextEditorCommand {
   data?: string;
   w?: number;
   h?: number;
+  nodeLinkPage?: number;
+  nodeLinkId?: string;
+  nodeLinkDoc?: string;
+  nodeLinkLabel?: string;
 }
 interface TextNodeProps {
   node: TextNodeType;
@@ -74,6 +79,7 @@ interface TextNodeProps {
   editing: boolean;
   command: TextEditorCommand | null;
   contentRevision: number;
+  highlightQuery?: string;
   onSelect: () => void;
   onBeginEdit: (point: { x: number; y: number }) => void;
   onCommit: (content: TextNodeType["content"]) => void;
@@ -84,6 +90,9 @@ interface TextNodeProps {
   onDragHandlePointerDown: (event: PointerLikeEvent) => void;
   onMiddlePanPointerDown: (event: PointerLikeEvent) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
+  onNavigateTo?: (pageIndex: number, nodeId: string) => void;
+  onNodeLinkClick?: (pageIndex: number, nodeId: string, x: number, y: number, documentPath?: string) => void;
+  onRequestInsertNodeLink?: (x: number, y: number) => void;
 }
 type EditorSelectionState =
   | { type: "none" }
@@ -143,6 +152,7 @@ export const TextNode = ({
   editing,
   command,
   contentRevision,
+  highlightQuery,
   onSelect,
   onBeginEdit,
   onCommit,
@@ -153,6 +163,9 @@ export const TextNode = ({
   onDragHandlePointerDown,
   onMiddlePanPointerDown,
   onResizePointerDown,
+  onNavigateTo,
+  onNodeLinkClick,
+  onRequestInsertNodeLink,
 }: TextNodeProps) => {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
@@ -172,6 +185,7 @@ export const TextNode = ({
   const suppressBlurCommitRef = useRef(false);
   const preserveToolbarBlurRef = useRef(false);
   const customClipboardRef = useRef<{ text: string; html: string } | null>(null);
+  const middlePasteGuardRef = useRef<{ until: number; html: string } | null>(null);
   const pendingSelectionRef = useRef<{
     startBlockIndex: number;
     startTopBlockIndex: number;
@@ -2128,6 +2142,74 @@ export const TextNode = ({
       placement,
     );
   };
+  const insertNodeLinkAtSelection = (cmd: TextEditorCommand) => {
+    if (!editorRef.current || cmd.nodeLinkPage == null || !cmd.nodeLinkId) return;
+
+    restoreSavedSelectionRange();
+
+    const label = cmd.nodeLinkLabel || cmd.nodeLinkId;
+    const docAttr = cmd.nodeLinkDoc ? ` data-node-link-doc="${escapeAttribute(cmd.nodeLinkDoc)}"` : "";
+
+    const selection = window.getSelection();
+    const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed;
+    let range: Range | null = null;
+
+    if (hasSelection) {
+      range = selection!.getRangeAt(0);
+      if (!editorRef.current.contains(range.commonAncestorContainer)) {
+        range = null;
+      }
+    }
+
+    // If no valid text selection, insert at caret or end
+    if (!range) {
+      placeCaretAtEnd();
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        range = sel.getRangeAt(0);
+        const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(label)}</a>`;
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = linkHtml;
+        const frag = document.createDocumentFragment();
+        while (wrapper.firstChild) {
+          frag.appendChild(wrapper.firstChild);
+        }
+        range.insertNode(frag);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        draftHtmlRef.current = editorRef.current.innerHTML;
+        syncDimensionsToContent({ expandTables: true });
+        onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
+        editorRef.current.focus();
+      }
+      return;
+    }
+
+    const selectedText = range.toString().trim();
+    const displayText = selectedText || label;
+    const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(displayText)}</a>`;
+
+    range.deleteContents();
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = linkHtml;
+    const frag = document.createDocumentFragment();
+    while (wrapper.firstChild) {
+      frag.appendChild(wrapper.firstChild);
+    }
+    range.insertNode(frag);
+
+    // Collapse to end
+    range.collapse(false);
+    selection!.removeAllRanges();
+    selection!.addRange(range);
+
+    draftHtmlRef.current = editorRef.current.innerHTML;
+    syncDimensionsToContent({ expandTables: true });
+    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
+    editorRef.current.focus();
+  };
+
   const appendTextAtEnd = (text: string) => {
     placeCaretAtEnd();
     insertTextAtCaret(text);
@@ -2477,6 +2559,7 @@ export const TextNode = ({
     event.stopPropagation();
     suppressBlurCommitRef.current = true;
     rememberActiveTableCell(cell);
+    saveCurrentSelectionRange();
     setSelectionAnchor(location);
     setTextContextMenu(null);
     setTableContextMenu({
@@ -2494,8 +2577,13 @@ export const TextNode = ({
     event.preventDefault();
     event.stopPropagation();
     suppressBlurCommitRef.current = true;
-    pendingCaretPointRef.current = { x: event.clientX, y: event.clientY };
-    placeCaretFromPoint();
+    // Only place caret if there's no existing selection (to preserve selected text)
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !editorRef.current?.contains(sel.anchorNode)) {
+      pendingCaretPointRef.current = { x: event.clientX, y: event.clientY };
+      placeCaretFromPoint();
+    }
+    saveCurrentSelectionRange();
     setTableContextMenu(null);
     setTextContextMenu({
       x: event.clientX,
@@ -2507,6 +2595,26 @@ export const TextNode = ({
     insertTableAtCaret();
     setTextContextMenu(null);
     restoreEditorFocus();
+  };
+  const requestInsertNodeLinkFromTextContextMenu = () => {
+    const context = textContextMenu;
+    saveCurrentSelectionRange();
+    setTextContextMenu(null);
+    if (context) {
+      onRequestInsertNodeLink?.(context.x, context.y);
+    }
+  };
+  const requestInsertNodeLinkFromTableContextMenu = () => {
+    const context = tableContextMenu;
+    const cell = getTableContextCell(context);
+    if (cell) {
+      rememberActiveTableCell(cell);
+    }
+    saveCurrentSelectionRange();
+    setTableContextMenu(null);
+    if (context) {
+      onRequestInsertNodeLink?.(context.x, context.y);
+    }
   };
   const getSelectionTableContext = () => {
     const selection = window.getSelection();
@@ -2788,11 +2896,11 @@ export const TextNode = ({
   useEffect(() => {
     if (!editing && editorRef.current) {
       appliedContentRevisionRef.current = contentRevision;
-      draftHtmlRef.current = richTextDocToHtml(node.content, assets);
+      draftHtmlRef.current = richTextDocToHtml(node.content, assets, highlightQuery);
       editorRef.current.innerHTML = draftHtmlRef.current;
       syncDimensionsToContent();
     }
-  }, [assets, editing, node.content]);
+  }, [assets, editing, node.content, highlightQuery]);
   useEffect(() => {
     if (!editing && editorRef.current) {
       syncHeightToContent();
@@ -3074,6 +3182,10 @@ export const TextNode = ({
       insertTimelineExampleTable(command.placement ?? "caret");
       return;
     }
+    if (command.type === "insert-node-link") {
+      insertNodeLinkAtSelection(command);
+      return;
+    }
     if (command.type === "insert-table") {
       insertTableAtCaret(command.placement ?? "caret");
       return;
@@ -3125,6 +3237,13 @@ export const TextNode = ({
       applyInlineFormatCommand(command);
     }
   }, [command, editing]);
+  const armMiddlePasteGuard = () => {
+    middlePasteGuardRef.current = {
+      until: performance.now() + 1200,
+      html: editorRef.current?.innerHTML ?? draftHtmlRef.current,
+    };
+  };
+
   return (
     <div
       className={`canvas-node text-node ${selected ? "selected" : ""} ${editing ? "editing" : ""}`}
@@ -3153,8 +3272,21 @@ export const TextNode = ({
         className="text-node-content"
         contentEditable={editing}
         suppressContentEditableWarning
+        onMouseDownCapture={(event) => {
+          if (event.button === 1) {
+            armMiddlePasteGuard();
+            event.preventDefault();
+          }
+        }}
+        onMouseUpCapture={(event) => {
+          if (event.button === 1) {
+            armMiddlePasteGuard();
+            event.preventDefault();
+          }
+        }}
         onPointerDownCapture={(event) => {
           if (event.button === 1) {
+            armMiddlePasteGuard();
             onMiddlePanPointerDown(event);
             return;
           }
@@ -3164,6 +3296,12 @@ export const TextNode = ({
           if (resizeWrapper) {
             onSelect();
             startTableResize(event, resizeWrapper);
+          }
+        }}
+        onPointerUpCapture={(event) => {
+          if (event.button === 1) {
+            armMiddlePasteGuard();
+            event.preventDefault();
           }
         }}
         onPointerDown={(event) => {
@@ -3264,6 +3402,24 @@ export const TextNode = ({
             event.stopPropagation();
             return;
           }
+          // Check for rich text link click
+          const targetLink = event.target instanceof HTMLElement ? event.target.closest("a.rich-text-link") : null;
+          if (targetLink) {
+            const href = targetLink.getAttribute("href");
+            const nodeLinkPage = targetLink.getAttribute("data-node-link-page");
+            const nodeLinkId = targetLink.getAttribute("data-node-link-id");
+            const nodeLinkDoc = targetLink.getAttribute("data-node-link-doc");
+            if (nodeLinkId && nodeLinkPage !== null) {
+              event.stopPropagation();
+              onNodeLinkClick?.(Number(nodeLinkPage), nodeLinkId, event.clientX, event.clientY, nodeLinkDoc || undefined);
+              return;
+            }
+            if (href && href !== "#") {
+              event.stopPropagation();
+              window.open(href, "_blank", "noreferrer");
+              return;
+            }
+          }
           const nodeResizeHandle = getNodeResizeHandle(event);
           const target = event.target;
           const targetElement = target instanceof HTMLElement ? target : null;
@@ -3303,11 +3459,39 @@ export const TextNode = ({
           setNodeResizeHover(null);
         }}
         onInput={(event) => {
+          const guard = middlePasteGuardRef.current;
+          const nativeEvent = event.nativeEvent as InputEvent;
+          if (
+            guard &&
+            performance.now() <= guard.until &&
+            nativeEvent.inputType.startsWith("insertFromPaste")
+          ) {
+            event.currentTarget.innerHTML = guard.html;
+            draftHtmlRef.current = guard.html;
+            middlePasteGuardRef.current = null;
+            syncActiveTableCellFromSelection();
+            saveCurrentSelectionRange();
+            syncDimensionsToContent();
+            onDraftChange(htmlToRichTextDoc(guard.html), { history: "coalesce" });
+            return;
+          }
+
           draftHtmlRef.current = event.currentTarget.innerHTML;
           syncActiveTableCellFromSelection();
           saveCurrentSelectionRange();
           syncDimensionsToContent();
           onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "coalesce" });
+        }}
+        onBeforeInput={(event) => {
+          const nativeEvent = event.nativeEvent as InputEvent;
+          const guard = middlePasteGuardRef.current;
+          if (
+            nativeEvent.inputType.startsWith("insertFromPaste") &&
+            guard &&
+            performance.now() <= guard.until
+          ) {
+            event.preventDefault();
+          }
         }}
         onKeyDown={handleKeyDown}
         onContextMenu={(event) => {
@@ -3367,6 +3551,9 @@ export const TextNode = ({
             insertTableAtCaret();
           })}>
             插入表格...
+          </button>
+          <button type="button" onClick={requestInsertNodeLinkFromTableContextMenu}>
+            添加引用
           </button>
           <div className="table-context-menu-separator" />
           <button type="button" onClick={() => runTableContextAction((cell) => {
@@ -3446,6 +3633,9 @@ export const TextNode = ({
         >
           <button type="button" onClick={insertTableFromTextContextMenu}>
             插入表格...
+          </button>
+          <button type="button" onClick={requestInsertNodeLinkFromTextContextMenu}>
+            添加引用
           </button>
         </div>,
         document.body,

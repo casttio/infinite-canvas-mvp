@@ -38,10 +38,21 @@ export interface PageBounds extends UnknownFields {
   h: number;
 }
 
+export type RichTextMark = "bold" | "italic" | "underline" | "strike" | "link";
+
+export interface RichTextNodeLink extends UnknownFields {
+  pageIndex: number;
+  nodeId: string;
+  label?: string;
+  documentPath?: string;
+}
+
 export interface RichTextTextLeaf extends UnknownFields {
   type: "text";
   text: string;
-  marks?: Array<"bold" | "italic" | "underline" | "strike">;
+  marks?: RichTextMark[];
+  href?: string;
+  nodeLink?: RichTextNodeLink;
   fontFamily?: string;
   fontSize?: string;
   color?: string;
@@ -145,6 +156,7 @@ export interface ConnectorNode extends UnknownFields {
   endMarker: ConnectorMarker;
   startMarker: ConnectorMarker;
   label?: string;
+  documentPath?: string;
   style: Record<string, unknown>;
 }
 
@@ -168,6 +180,7 @@ export interface TimelineNodeFields {
     pageIndex: number;
     nodeId: string;
     label?: string;
+  documentPath?: string;
   };
 }
 

@@ -3,6 +3,7 @@ import type {
   RichTextBlock,
   RichTextDoc,
   RichTextInline,
+  RichTextMark,
   RichTextParagraph,
   RichTextTable,
   RichTextTableCell,
@@ -14,6 +15,17 @@ const escapeHtml = (value: string) =>
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const highlightText = (escapedText: string, query: string): string => {
+  if (!query) return escapedText;
+  const pattern = escapeRegex(query);
+  return escapedText.replace(
+    new RegExp(`(${pattern})`, "gi"),
+    '<mark class="search-highlight">$1</mark>',
+  );
+};
 
 const escapeAttribute = (value: string) => escapeHtml(value).replaceAll("\"", "&quot;");
 
@@ -44,7 +56,7 @@ const ensureParagraphContent = (content: RichTextInline[]): RichTextInline[] =>
 const ensureBlocks = (blocks: RichTextBlock[]): RichTextBlock[] =>
   blocks.length > 0 ? blocks : [createEmptyParagraph()];
 
-const wrapMarks = (text: string, marks: Array<"bold" | "italic" | "underline" | "strike"> = []) => {
+const wrapMarks = (text: string, marks: RichTextMark[] = []) => {
   return marks.reduce((result, mark) => {
     if (mark === "bold") {
       return `<strong>${result}</strong>`;
@@ -103,7 +115,27 @@ const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type
   return `<span ${attributes}>${content}</span>`;
 };
 
-const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}) => {
+const wrapLink = (content: string, inline: Extract<RichTextInline, { type: "text" }>) => {
+  if (!inline.href && !inline.nodeLink) {
+    return content;
+  }
+
+  const attributes = [
+    `class="rich-text-link"`,
+    inline.href ? `href="${escapeAttribute(inline.href)}"` : `href="#"`,
+    inline.href ? `data-href="${escapeAttribute(inline.href)}"` : "",
+    inline.nodeLink ? `data-node-link-page="${inline.nodeLink.pageIndex}"` : "",
+    inline.nodeLink ? `data-node-link-id="${escapeAttribute(inline.nodeLink.nodeId)}"` : "",
+    inline.nodeLink?.label ? `data-node-link-label="${escapeAttribute(inline.nodeLink.label)}"` : "",
+    inline.nodeLink?.documentPath ? `data-node-link-doc="${escapeAttribute(inline.nodeLink.documentPath)}"` : "",
+    inline.href ? `target="_blank"` : "",
+    inline.href ? `rel="noreferrer"` : "",
+  ].filter(Boolean).join(" ");
+
+  return `<a ${attributes}>${content}</a>`;
+};
+
+const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}, highlightQuery?: string) => {
   if (inline.type === "break") {
     return "<br />";
   }
@@ -123,20 +155,24 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}) => {
     return `<span class="text-inline-image-frame" contenteditable="false" data-asset-id="${escapeAttribute(inline.assetId)}" ${sizeAttributes}><img src="${escapeAttribute(asset.data)}" alt="${escapeAttribute(asset.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span></span>`;
   }
 
-  return wrapInlineStyle(wrapMarks(escapeHtml(inline.text), inline.marks), inline);
+  const text = escapeHtml(inline.text);
+  const highlighted = highlightQuery ? highlightText(text, highlightQuery) : text;
+  const markedText = wrapMarks(highlighted, inline.marks?.filter((mark) => mark !== "link"));
+  return wrapInlineStyle(wrapLink(markedText, inline), inline);
 };
 
-const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}): string =>
-  `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets)).join("") || "<br />"}</p></div>`;
+const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}, highlightQuery?: string): string =>
+  `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets, highlightQuery)).join("") || "<br />"}</p></div>`;
 
 const tableCellToHtml = (
   cell: RichTextTableCell,
   assets: AssetMap = {},
   tableDepth = 0,
+  highlightQuery?: string,
 ): string =>
-  `<td>${wrapTableCellContentHtml(blocksToHtml(ensureBlocks(cell.content), assets, tableDepth))}</td>`;
+  `<td>${wrapTableCellContentHtml(blocksToHtml(ensureBlocks(cell.content), assets, tableDepth, highlightQuery))}</td>`;
 
-const tableToHtml = (table: RichTextTable, assets: AssetMap = {}, tableDepth = 0): string => {
+const tableToHtml = (table: RichTextTable, assets: AssetMap = {}, tableDepth = 0, highlightQuery?: string): string => {
   const columnWidths = Array.isArray(table.colWidths) ? table.colWidths.filter((width) => Number.isFinite(width) && width > 0) : [];
   const totalColumnWidth = columnWidths.reduce((sum, width) => sum + width, 0);
   const wrapperWidth = totalColumnWidth > 0 ? totalColumnWidth : table.w;
@@ -150,19 +186,19 @@ const tableToHtml = (table: RichTextTable, assets: AssetMap = {}, tableDepth = 0
     ? `<colgroup>${columnWidths.map((width) => `<col style="width: ${width}px;" />`).join("")}</colgroup>`
     : "";
 
-  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${colGroup}<tbody>${table.rows.map((row) => `<tr>${row.cells.map((cell) => tableCellToHtml(cell, assets, tableDepth + 1)).join("")}</tr>`).join("")}</tbody></table></div>`;
+  return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${colGroup}<tbody>${table.rows.map((row) => `<tr>${row.cells.map((cell) => tableCellToHtml(cell, assets, tableDepth + 1, highlightQuery)).join("")}</tr>`).join("")}</tbody></table></div>`;
 };
 
-const blockToHtml = (block: RichTextBlock, assets: AssetMap = {}, tableDepth = 0): string => {
+const blockToHtml = (block: RichTextBlock, assets: AssetMap = {}, tableDepth = 0, highlightQuery?: string): string => {
   if (block.type === "table") {
-    return tableToHtml(block, assets, tableDepth);
+    return tableToHtml(block, assets, tableDepth, highlightQuery);
   }
 
-  return paragraphToHtml(block, assets);
+  return paragraphToHtml(block, assets, highlightQuery);
 };
 
-const blocksToHtml = (blocks: RichTextBlock[], assets: AssetMap = {}, tableDepth = 0): string =>
-  blocks.map((block) => blockToHtml(block, assets, tableDepth)).join("");
+const blocksToHtml = (blocks: RichTextBlock[], assets: AssetMap = {}, tableDepth = 0, highlightQuery?: string): string =>
+  blocks.map((block) => blockToHtml(block, assets, tableDepth, highlightQuery)).join("");
 
 export const createRichTextTableHtml = (rows = 2, columns = 2) =>
   `<div class="text-block text-block-table-wrap" data-block-kind="table"><table class="text-block-table"><tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => createEmptyTableCellHtml()).join("")}</tr>`).join("")}</tbody></table></div>`;
@@ -181,10 +217,10 @@ export const wrapRichTextTableHtml = (tableInnerHtml: string, options?: { width?
   return `<div class="text-block text-block-table-wrap" data-block-kind="table" ${widthAttributes}><table class="text-block-table">${tableInnerHtml}</table></div>`;
 };
 
-export const richTextDocToHtml = (doc: RichTextDoc, assets: AssetMap = {}) =>
-  blocksToHtml(ensureBlocks(doc.content), assets);
+export const richTextDocToHtml = (doc: RichTextDoc, assets: AssetMap = {}, highlightQuery?: string) =>
+  blocksToHtml(ensureBlocks(doc.content), assets, 0, highlightQuery);
 
-const readMarks = (element: Node | null, marks: Array<"bold" | "italic" | "underline" | "strike"> = []) => {
+const readMarks = (element: Node | null, marks: RichTextMark[] = []) => {
   let current = element;
   const nextMarks = [...marks];
 
@@ -214,6 +250,9 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic" | "under
     if ((tagName === "s" || tagName === "strike" || tagName === "del") && !nextMarks.includes("strike")) {
       nextMarks.push("strike");
     }
+    if (tagName === "a" && !nextMarks.includes("link")) {
+      nextMarks.push("link");
+    }
     const textDecoration = current.style.textDecorationLine || current.style.textDecoration;
     if (textDecoration.includes("underline") && !nextMarks.includes("underline")) {
       nextMarks.push("underline");
@@ -225,6 +264,45 @@ const readMarks = (element: Node | null, marks: Array<"bold" | "italic" | "under
   }
 
   return nextMarks;
+};
+
+const readLink = (element: Node | null) => {
+  let current = element;
+  let href: string | undefined;
+  let nodeLink: Extract<RichTextInline, { type: "text" }>["nodeLink"];
+
+  while (current && current instanceof HTMLElement) {
+    if (current.tagName.toLowerCase() === "a") {
+      const rawHref = current.dataset.href || current.getAttribute("href") || undefined;
+      href = rawHref && rawHref !== "#" ? rawHref : href;
+
+      const rawPage = current.dataset.nodeLinkPage;
+      const nodeId = current.dataset.nodeLinkId;
+      const pageIndex = rawPage !== undefined ? Number(rawPage) : NaN;
+      if (nodeId && Number.isFinite(pageIndex)) {
+        nodeLink = {
+          pageIndex: Math.max(0, Math.round(pageIndex)),
+          nodeId,
+          ...(current.dataset.nodeLinkLabel ? { label: current.dataset.nodeLinkLabel } : {}),
+        };
+      }
+    }
+
+    if (
+      current.dataset.blockKind
+      || current.classList.contains("text-block-table-cell-content")
+      || current.tagName.toLowerCase() === "td"
+    ) {
+      break;
+    }
+
+    current = current.parentElement;
+  }
+
+  return {
+    ...(href ? { href } : {}),
+    ...(nodeLink ? { nodeLink } : {}),
+  };
 };
 
 const readInlineStyle = (element: Node | null) => {
@@ -304,6 +382,7 @@ const appendInlineNode = (node: Node, content: RichTextInline[]) => {
         type: "text",
         text,
         marks: readMarks(node.parentNode),
+        ...readLink(node.parentNode),
         ...readInlineStyle(node.parentNode),
       });
     }

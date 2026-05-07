@@ -8,12 +8,21 @@ import type {
 } from "./types";
 
 const unknownRecord = z.record(z.string(), z.unknown());
+const richTextMarkSchema = z.enum(["bold", "italic", "underline", "strike", "link"]);
+const richTextNodeLinkSchema = z.object({
+  pageIndex: z.number().int().nonnegative(),
+  nodeId: z.string().min(1),
+  label: z.string().optional(),
+  documentPath: z.string().min(1).optional(),
+}).catchall(z.unknown());
 
 const richTextInlineSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
     text: z.string(),
-    marks: z.array(z.enum(["bold", "italic", "underline", "strike"])).optional(),
+    marks: z.array(richTextMarkSchema).optional(),
+    href: z.string().min(1).optional(),
+    nodeLink: richTextNodeLinkSchema.optional(),
     fontFamily: z.string().min(1).optional(),
     fontSize: z.string().min(1).optional(),
     color: z.string().min(1).optional(),
@@ -99,6 +108,7 @@ const shapeNodeSchema = baseNodeSchema.extend({
 }).catchall(z.unknown());
 
 const timelineNodeFieldsSchema = z.object({
+  category: z.string().optional(),
   date: z.string(),
   title: z.string(),
   summary: z.string().optional(),
@@ -112,6 +122,7 @@ const timelineNodeFieldsSchema = z.object({
   importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
   addedAt: z.string().optional(),
   source: z.enum(["manual", "arxiv", "rss"]).optional(),
+  nodeRef: richTextNodeLinkSchema.optional(),
 }).catchall(z.unknown());
 
 const timelineNodeSchema = baseNodeSchema.extend({
@@ -138,6 +149,7 @@ const connectorNodeSchema = z.object({
   endMarker: z.enum(["none", "arrow", "circle"]),
   startMarker: z.enum(["none", "arrow", "circle"]),
   label: z.string().optional(),
+  documentPath: z.string().min(1).optional(),
   style: unknownRecord,
 }).catchall(z.unknown());
 

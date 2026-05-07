@@ -37,10 +37,33 @@ const normalizeInline = (inline: RichTextInline): RichTextInline => {
     const highlightColor = typeof inline.highlightColor === "string" && inline.highlightColor.trim().length > 0
       ? inline.highlightColor.trim()
       : undefined;
+    const href = typeof inline.href === "string" && inline.href.trim().length > 0
+      ? inline.href.trim()
+      : undefined;
+    const nodeLink = inline.nodeLink
+      && typeof inline.nodeLink.nodeId === "string"
+      && inline.nodeLink.nodeId.trim().length > 0
+      && typeof inline.nodeLink.pageIndex === "number"
+      && Number.isFinite(inline.nodeLink.pageIndex)
+      ? {
+          ...inline.nodeLink,
+          pageIndex: Math.max(0, Math.round(inline.nodeLink.pageIndex)),
+          nodeId: inline.nodeLink.nodeId.trim(),
+          ...(typeof inline.nodeLink.label === "string" && inline.nodeLink.label.trim().length > 0
+            ? { label: inline.nodeLink.label.trim() }
+            : {}),
+        }
+      : undefined;
+    const marks = Array.isArray(inline.marks) ? inline.marks : [];
+    const nextMarks = href || nodeLink
+      ? Array.from(new Set([...marks, "link" as const]))
+      : marks.filter((mark) => mark !== "link");
 
     return {
       ...inline,
-      marks: Array.isArray(inline.marks) ? inline.marks : [],
+      marks: nextMarks,
+      ...(href ? { href } : {}),
+      ...(nodeLink ? { nodeLink } : {}),
       ...(fontFamily ? { fontFamily } : {}),
       ...(fontSize ? { fontSize } : {}),
       ...(color ? { color } : {}),
