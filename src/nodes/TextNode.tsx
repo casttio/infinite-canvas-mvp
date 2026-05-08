@@ -173,7 +173,10 @@ export const TextNode = ({
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
   const appliedContentRevisionRef = useRef(contentRevision);
   const savedSelectionRangeRef = useRef<Range | null>(null);
-  const cursorPathRef = useRef<{ path: number[]; offset: number } | null>(null);
+  const cursorPathRef = useRef<{
+    startPath: number[]; startOffset: number;
+    endPath: number[];   endOffset: number;
+  } | null>(null);
   const pendingCaretPointRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredColumnCellRef = useRef<HTMLTableCellElement | null>(null);
   const hoveredTableWrapRef = useRef<HTMLElement | null>(null);
@@ -344,44 +347,59 @@ export const TextNode = ({
       return null;
     }
   };
-  /** Save cursor position as DOM child-node indices + text offset.
+  /** Save cursor/selection as DOM child-node indices + text offsets.
    *  Survives text-node normalization because it stores numeric paths
-   *  instead of raw DOM references. */
+   *  instead of raw DOM references. Preserves non-collapsed selections. */
   const saveCursorPath = (): boolean => {
     const sel = window.getSelection();
     const editor = editorRef.current;
     if (!sel || !sel.rangeCount || !editor) return false;
     const range = sel.getRangeAt(0);
     if (!editor.contains(range.commonAncestorContainer)) return false;
-    const path: number[] = [];
-    let node: Node | null = range.startContainer;
-    while (node && node !== editor) {
-      const parent: Node | null = node.parentNode;
-      if (!parent) return false;
-      let index = -1;
-      for (let i = 0; i < parent.childNodes.length; i += 1) {
-        if (parent.childNodes[i] === node) { index = i; break; }
+    const nodePath = (target: Node): number[] | null => {
+      const p: number[] = [];
+      let n: Node | null = target;
+      while (n && n !== editor) {
+        const parent: Node | null = n.parentNode;
+        if (!parent) return null;
+        let idx = -1;
+        for (let i = 0; i < parent.childNodes.length; i += 1) {
+          if (parent.childNodes[i] === n) { idx = i; break; }
+        }
+        if (idx === -1) return null;
+        p.unshift(idx);
+        n = parent;
       }
-      if (index === -1) return false;
-      path.unshift(index);
-      node = parent;
-    }
-    cursorPathRef.current = { path, offset: range.startOffset };
+      return p;
+    };
+    const startPath = nodePath(range.startContainer);
+    const endPath = nodePath(range.endContainer);
+    if (!startPath || !endPath) return false;
+    cursorPathRef.current = {
+      startPath, startOffset: range.startOffset,
+      endPath,   endOffset:   range.endOffset,
+    };
     return true;
   };
   const restoreCursorPath = (): Range | null => {
     const editor = editorRef.current;
     const saved = cursorPathRef.current;
     if (!editor || !saved) return null;
-    let node: Node = editor;
-    for (const index of saved.path) {
-      if (index >= node.childNodes.length) return null;
-      node = node.childNodes[index];
-    }
+    const resolveNode = (path: number[]): Node | null => {
+      let n: Node = editor;
+      for (const index of path) {
+        if (index >= n.childNodes.length) return null;
+        n = n.childNodes[index];
+      }
+      return n;
+    };
+    const startNode = resolveNode(saved.startPath);
+    const endNode   = resolveNode(saved.endPath);
+    if (!startNode || !endNode) return null;
     try {
       const range = document.createRange();
-      range.setStart(node, Math.min(saved.offset, node.textContent?.length ?? 0));
-      range.collapse(true);
+      range.setStart(startNode, Math.min(saved.startOffset, startNode.textContent?.length ?? 0));
+      range.setEnd(endNode,     Math.min(saved.endOffset,   endNode.textContent?.length   ?? 0));
       return range;
     } catch {
       return null;
@@ -2279,7 +2297,6 @@ export const TextNode = ({
 
     const label = cmd.nodeLinkLabel || cmd.nodeLinkId;
     const docAttr = cmd.nodeLinkDoc ? ` data-node-link-doc="${escapeAttribute(cmd.nodeLinkDoc)}"` : "";
-    const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(label)}</a>`;
 
     const buildFrag = (html: string) => {
       const wrapper = document.createElement("div");
@@ -2289,42 +2306,31 @@ export const TextNode = ({
       return frag;
     };
 
-    // Try to get a range from current selection first (non-collapsed = user highlighted text)
-    const liveSel = window.getSelection();
-    const liveRange = liveSel && liveSel.rangeCount > 0 ? liveSel.getRangeAt(0) : null;
-    const hasLiveSelection = liveRange && !liveRange.collapsed && editorRef.current.contains(liveRange.commonAncestorContainer);
+    // Restore saved position (path survives text-node normalization; cloneRange as fallback)
+    let insertRange: Range | null = restoreCursorPath() ?? restoreSavedSelectionRange();
 
-    if (hasLiveSelection) {
-      const selectedText = liveRange!.toString().trim();
-      const displayHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(selectedText || label)}</a>`;
-      liveRange!.deleteContents();
-      insertFragmentAtRange(liveRange!, buildFrag(displayHtml));
-    } else {
-      // Restore saved cursor position — prefer path (survives text-node normalization)
-      const restoredRange = restoreCursorPath() ?? restoreSavedSelectionRange();
-      let insertRange: Range | null = restoredRange;
-
-      if (!insertRange) {
-        // Fallback: active table cell or end of editor
-        if (activeTableCellRef.current && editorRef.current.contains(activeTableCellRef.current)) {
-          placeCaretInside(activeTableCellRef.current);
-        } else {
-          placeCaretAtEnd();
-        }
-        const sel2 = window.getSelection();
-        insertRange = sel2 && sel2.rangeCount > 0 ? sel2.getRangeAt(0) : null;
+    if (!insertRange) {
+      if (activeTableCellRef.current && editorRef.current.contains(activeTableCellRef.current)) {
+        placeCaretInside(activeTableCellRef.current);
+      } else {
+        placeCaretAtEnd();
       }
-
-      if (insertRange) {
-        editorRef.current.focus();
-        insertFragmentAtRange(insertRange, buildFrag(linkHtml));
-        const sel2 = window.getSelection();
-        if (sel2) {
-          sel2.removeAllRanges();
-          sel2.addRange(insertRange);
-        }
-      }
+      const sel2 = window.getSelection();
+      insertRange = sel2 && sel2.rangeCount > 0 ? sel2.getRangeAt(0) : null;
     }
+
+    if (!insertRange) return;
+
+    const hasSelection = !insertRange.collapsed;
+    const selectedText = hasSelection ? insertRange.toString().trim() : "";
+    const displayText = selectedText || label;
+    const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(displayText)}</a>`;
+
+    if (hasSelection) insertRange.deleteContents();
+    editorRef.current.focus();
+    insertFragmentAtRange(insertRange, buildFrag(linkHtml));
+    const sel = window.getSelection();
+    if (sel) { sel.removeAllRanges(); sel.addRange(insertRange); }
 
     draftHtmlRef.current = editorRef.current.innerHTML;
     syncDimensionsToContent({ expandTables: true });
