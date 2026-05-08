@@ -355,7 +355,7 @@ export const TextNode = ({
     const path: number[] = [];
     let node: Node | null = range.startContainer;
     while (node && node !== editor) {
-      const parent = node.parentNode;
+      const parent: Node | null = node.parentNode;
       if (!parent) return false;
       let index = -1;
       for (let i = 0; i < parent.childNodes.length; i += 1) {
