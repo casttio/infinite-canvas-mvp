@@ -23,8 +23,8 @@ interface TimelineNodeProps {
 }
 
 const CATEGORY_COLORS = [
-  "#2563eb", "#16a34a", "#dc2626", "#9333ea",
-  "#ea580c", "#0891b2", "#4f46e5", "#be123c",
+  "#D57D61", "#65826A", "#C3A972", "#7B7484",
+  "#6B808F", "#A88975", "#5C6773", "#B55B5B",
 ];
 
 const getCategoryColor = (category: string) => {

@@ -73,14 +73,14 @@ describe("createShapeNode", () => {
     const n = createShapeNode(10, 20);
     expect(n.type).toBe("shape");
     expect(n.shapeType).toBe("rect");
-    expect(n.fill).toBe("#dbeafe");
-    expect(n.borderRadius).toBe(12);
+    expect(n.fill).toBe("#FFFFFF");
+    expect(n.borderRadius).toBe(8);
   });
 
   it("creates an ellipse shape", () => {
     const n = createShapeNode(10, 20, "ellipse");
     expect(n.shapeType).toBe("ellipse");
-    expect(n.fill).toBe("#fef3c7");
+    expect(n.fill).toBe("#FFFFFF");
     expect(n.borderRadius).toBeUndefined();
   });
 });
@@ -94,7 +94,7 @@ describe("createConnectorNode", () => {
     expect(n.x2).toBe(200);
     expect(n.y2).toBe(100);
     expect(n.endMarker).toBe("arrow");
-    expect(n.stroke).toBe("#2563eb");
+    expect(n.stroke).toBe("#9E9993");
   });
 
   it("accepts custom options", () => {
@@ -103,7 +103,7 @@ describe("createConnectorNode", () => {
       startAnchor: "bottom",
       endNodeId: "node_text_def",
       endAnchor: "top",
-      stroke: "#dc2626",
+      stroke: "#B55B5B",
       strokeWidth: 3,
       lineStyle: "dashed",
       endMarker: "circle",
@@ -113,7 +113,7 @@ describe("createConnectorNode", () => {
     expect(n.startAnchor).toBe("bottom");
     expect(n.endNodeId).toBe("node_text_def");
     expect(n.endAnchor).toBe("top");
-    expect(n.stroke).toBe("#dc2626");
+    expect(n.stroke).toBe("#B55B5B");
     expect(n.strokeWidth).toBe(3);
     expect(n.lineStyle).toBe("dashed");
     expect(n.endMarker).toBe("circle");

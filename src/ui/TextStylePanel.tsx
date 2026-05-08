@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 const DEFAULT_FONT_OPTIONS = ["sans-serif", "serif", "monospace", "KaiTi"];
-const DEFAULT_FONT_SIZE_OPTIONS = ["12px", "14px", "16px", "18px", "24px", "32px"];
-const DEFAULT_TEXT_COLORS = ["#0f172a", "#2563eb", "#dc2626", "#16a34a", "#9333ea"];
+const DEFAULT_FONT_SIZE_OPTIONS = ["12px", "14px", "15px", "16px", "18px", "24px", "32px"];
+const DEFAULT_TEXT_COLORS = ["#24211F", "#D57D61", "#B55B5B", "#65826A", "#7B7484"];
 const DEFAULT_HIGHLIGHT_COLORS = ["#fef08a", "#fed7aa", "#bfdbfe", "#bbf7d0", "#fbcfe8"];
 
 const STORAGE_KEYS = {
@@ -115,7 +115,7 @@ export const TextStylePanel = ({
   const [highlightColors, setHighlightColors] = useState(DEFAULT_HIGHLIGHT_COLORS);
   const [customFont, setCustomFont] = useState("");
   const [customFontSize, setCustomFontSize] = useState("");
-  const [customTextColor, setCustomTextColor] = useState("#0f172a");
+  const [customTextColor, setCustomTextColor] = useState("#24211F");
   const [customHighlightColor, setCustomHighlightColor] = useState("#fef08a");
 
   useEffect(() => {

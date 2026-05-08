@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { MAX_ZOOM_SLIDER_VALUE, sliderValueToZoom, zoomToSliderValue } from "../editor/viewport";
 
+const FONT_SERIF = '"Newsreader", "Charter", "Georgia", "Noto Serif SC", "Songti SC", "STSong", serif';
+const FONT_SANS = 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+const FONT_MONO = '"JetBrains Mono", "Courier New", monospace';
+
 const FONT_OPTIONS = [
-  { label: "微软雅黑", value: "Microsoft YaHei, sans-serif" },
-  { label: "宋体", value: "SimSun, serif" },
-  { label: "黑体", value: "SimHei, sans-serif" },
-  { label: "楷体", value: "KaiTi, serif" },
-  { label: "Arial", value: "Arial, sans-serif" },
+  { label: "默认无衬线", value: FONT_SANS },
+  { label: "衬线体", value: FONT_SERIF },
+  { label: "等宽体", value: FONT_MONO },
+  { label: "微软雅黑", value: '"Microsoft YaHei", sans-serif' },
+  { label: "宋体", value: '"SimSun", serif' },
+  { label: "黑体", value: '"SimHei", sans-serif' },
 ];
 
-const FONT_SIZE_OPTIONS = ["11", "12", "14", "16", "18", "24", "32"];
+const FONT_SIZE_OPTIONS = ["12", "14", "15", "16", "18", "24", "32"];
 type ToolbarTab = "file" | "search" | "home" | "insert" | "table";
 type ConnectorStyleControls = {
   stroke: string;
@@ -31,17 +36,13 @@ type BlockStylePreset = {
   italic: boolean;
 };
 const DEFAULT_BLOCK_STYLE_PRESETS: BlockStylePreset[] = [
-  { id: "title1", label: "标题 1", className: "title-1", tag: "h1", fontSize: "32", color: "#1d4ed8", fontFamily: "Georgia, serif", bold: true, italic: false },
-  { id: "title2", label: "标题 2", className: "title-2", tag: "h2", fontSize: "28", color: "#2563eb", fontFamily: "Georgia, serif", bold: true, italic: false },
-  { id: "title3", label: "标题 3", className: "title-3", tag: "h3", fontSize: "24", color: "#3b82f6", fontFamily: "Georgia, serif", bold: true, italic: false },
-  { id: "title4", label: "标题 4", className: "title-4", tag: "h4", fontSize: "20", color: "#60a5fa", fontFamily: "Georgia, serif", bold: true, italic: true },
-  { id: "title5", label: "标题 5", className: "title-5", tag: "h5", fontSize: "18", color: "#2563eb", fontFamily: "Georgia, serif", bold: true, italic: true },
-  { id: "title6", label: "标题 6", className: "title-6", tag: "h6", fontSize: "16", color: "#3b82f6", fontFamily: "Georgia, serif", bold: true, italic: true },
-  { id: "pageTitle", label: "页标题", className: "page-title", tag: "h1", fontSize: "36", color: "#0f172a", fontFamily: "Georgia, serif", bold: true, italic: false },
-  { id: "lead", label: "引文", className: "lead", tag: "p", fontSize: "18", color: "#475569", fontFamily: "Microsoft YaHei, sans-serif", bold: false, italic: false },
-  { id: "quote", label: "引用", className: "quote", tag: "blockquote", fontSize: "16", color: "#64748b", fontFamily: "Georgia, serif", bold: false, italic: true },
-  { id: "code", label: "代码", className: "code", tag: "pre", fontSize: "15", color: "#0f172a", fontFamily: "Consolas, monospace", bold: false, italic: false },
-  { id: "normal", label: "常规", className: "normal", tag: "p", fontSize: "16", color: "#0f172a", fontFamily: "Microsoft YaHei, sans-serif", bold: false, italic: false },
+  { id: "title1", label: "标题 1", className: "title-1", tag: "h1", fontSize: "32", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
+  { id: "title2", label: "标题 2", className: "title-2", tag: "h2", fontSize: "24", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
+  { id: "title3", label: "标题 3", className: "title-3", tag: "h3", fontSize: "18", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
+  { id: "quote", label: "引用", className: "quote", tag: "blockquote", fontSize: "15", color: "#6B6661", fontFamily: FONT_SERIF, bold: false, italic: true },
+  { id: "normal", label: "常规", className: "normal", tag: "p", fontSize: "15", color: "#24211F", fontFamily: FONT_SANS, bold: false, italic: false },
+  { id: "lead", label: "引文", className: "lead", tag: "p", fontSize: "16", color: "#6B6661", fontFamily: FONT_SANS, bold: false, italic: false },
+  { id: "code", label: "代码", className: "code", tag: "pre", fontSize: "14", color: "#D57D61", fontFamily: FONT_MONO, bold: false, italic: false },
 ];
 
 const readBlockStylePresets = () => {
@@ -214,7 +215,7 @@ export const Toolbar = ({
   const [activeTab, setActiveTab] = useState<ToolbarTab>("home");
   const [fontFamily, setFontFamily] = useState(FONT_OPTIONS[0].value);
   const [fontSize, setFontSize] = useState("11");
-  const [textColor, setTextColor] = useState("#0f172a");
+  const [textColor, setTextColor] = useState("#24211F");
   const [highlightColor, setHighlightColor] = useState("#fef200");
   const [showBlockStyleMenu, setShowBlockStyleMenu] = useState(false);
   const [showBlockStyleEditor, setShowBlockStyleEditor] = useState(false);
@@ -447,7 +448,7 @@ export const Toolbar = ({
           <input
             className="connector-color-input"
             type="color"
-            value={selectedConnectorStyle?.stroke ?? "#2563eb"}
+            value={selectedConnectorStyle?.stroke ?? "#D57D61"}
             disabled={!selectedConnectorStyle}
             onChange={(event) => onSetConnectorStroke(event.currentTarget.value)}
             aria-label="连线颜色"

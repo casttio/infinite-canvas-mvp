@@ -344,7 +344,7 @@ const readInlineStyle = (element: Node | null) => {
         ?? current.getAttribute("color"),
       );
       if (!color && current.tagName.toLowerCase() === "blockquote") {
-        color = "#475569";
+        color = "#6B6661";
       }
     }
 

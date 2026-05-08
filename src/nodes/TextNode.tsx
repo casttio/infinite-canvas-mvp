@@ -482,17 +482,17 @@ export const TextNode = ({
       return null;
     }
     const stylesById: Record<string, BlockStyleCommandPreset> = {
-      title1: { tag: "h1", fontSize: "32px", bold: true, color: "#1d4ed8" },
-      title2: { tag: "h2", fontSize: "28px", bold: true, color: "#2563eb" },
-      title3: { tag: "h3", fontSize: "24px", bold: true, color: "#3b82f6" },
-      title4: { tag: "h4", fontSize: "20px", bold: true, italic: true, color: "#60a5fa" },
-      title5: { tag: "h5", fontSize: "18px", bold: true, italic: true, color: "#2563eb" },
-      title6: { tag: "h6", fontSize: "16px", bold: true, italic: true, color: "#3b82f6" },
-      pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#0f172a" },
-      lead: { tag: "p", fontSize: "18px", color: "#475569" },
-      quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#64748b" },
-      code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#0f172a" },
-      normal: { tag: "p", fontSize: "16px", color: "#0f172a" },
+      title1: { tag: "h1", fontSize: "32px", bold: true, color: "#24211F" },
+      title2: { tag: "h2", fontSize: "28px", bold: true, color: "#24211F" },
+      title3: { tag: "h3", fontSize: "24px", bold: true, color: "#24211F" },
+      title4: { tag: "h4", fontSize: "20px", bold: true, italic: true, color: "#6B6661" },
+      title5: { tag: "h5", fontSize: "18px", bold: true, italic: true, color: "#6B6661" },
+      title6: { tag: "h6", fontSize: "16px", bold: true, italic: true, color: "#6B6661" },
+      pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#24211F" },
+      lead: { tag: "p", fontSize: "18px", color: "#6B6661" },
+      quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#9E9993" },
+      code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#D57D61" },
+      normal: { tag: "p", fontSize: "16px", color: "#24211F" },
     };
     return nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle] ?? null;
   };

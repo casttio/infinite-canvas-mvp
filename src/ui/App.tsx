@@ -4138,25 +4138,25 @@ export const App = () => {
       {trashDialogOpen && trashEntries !== null ? (
         <div className="modal-backdrop" onPointerDown={handleCloseTrash}>
           <div className="trash-dialog" onPointerDown={(event) => event.stopPropagation()} style={{ width: 560, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
-            <div className="trash-dialog-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+            <div className="trash-dialog-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e9ecef' }}>
               <strong style={{ fontSize: 16 }}>回收站</strong>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" className="toolbar-button" onClick={handleEmptyTrash} style={{ fontSize: 12, padding: '2px 10px' }} disabled={trashEntries.length === 0}>清空回收站</button>
-                <button type="button" onClick={handleCloseTrash} aria-label="关闭" style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#64748b' }}>×</button>
+                <button type="button" onClick={handleCloseTrash} aria-label="关闭" style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#9E9993' }}>×</button>
               </div>
             </div>
             <div className="trash-dialog-body" style={{ overflowY: 'auto', padding: 8 }}>
               {trashEntries.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>回收站是空的</div>
+                <div style={{ padding: 32, textAlign: 'center', color: '#9E9993', fontSize: 14 }}>回收站是空的</div>
               ) : (
                 trashEntries.map((entry) => {
                   const originalName = entry.name.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_/, "");
                   const deletedAt = new Date(entry.mtimeMs).toLocaleString("zh-CN");
                   return (
-                    <div key={entry.path} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #f1f5f9' }}>
+                    <div key={entry.path} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #F0EEE9' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{originalName}</div>
-                        <div style={{ fontSize: 12, color: '#94a3b8' }}>删除于 {deletedAt}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#24211F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{originalName}</div>
+                        <div style={{ fontSize: 12, color: '#9E9993' }}>删除于 {deletedAt}</div>
                       </div>
                       <button
                         type="button"
@@ -4199,14 +4199,14 @@ export const App = () => {
       {nodeLinkPicker ? (
         <div className="modal-backdrop" onPointerDown={handleCancelNodeLinkPicker}>
           <div className="node-link-picker" onPointerDown={(event) => event.stopPropagation()} style={{ width: 440, maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e9ecef' }}>
               <strong style={{ fontSize: 15 }}>选择要引用的节点</strong>
-              <button type="button" onClick={handleCancelNodeLinkPicker} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#64748b' }}>×</button>
+              <button type="button" onClick={handleCancelNodeLinkPicker} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: '#9E9993' }}>×</button>
             </div>
             {/* Tab bar */}
-            <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid #e9ecef' }}>
               <button type="button" onClick={() => setExternalDocPickerTab("current")}
-                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "current" ? 700 : 400, color: externalDocPickerTab === "current" ? '#0f172a' : '#64748b', borderBottom: externalDocPickerTab === "current" ? '2px solid #6366f1' : '2px solid transparent' }}>
+                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "current" ? 700 : 400, color: externalDocPickerTab === "current" ? '#24211F' : '#9E9993', borderBottom: externalDocPickerTab === "current" ? '2px solid #D57D61' : '2px solid transparent' }}>
                 当前文档
               </button>
               <button type="button" onClick={async () => {
@@ -4224,12 +4224,12 @@ export const App = () => {
                   }
                 }
               }}
-                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "external" ? 700 : 400, color: externalDocPickerTab === "external" ? '#0f172a' : '#64748b', borderBottom: externalDocPickerTab === "external" ? '2px solid #6366f1' : '2px solid transparent' }}>
+                style={{ flex: 1, padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: externalDocPickerTab === "external" ? 700 : 400, color: externalDocPickerTab === "external" ? '#24211F' : '#9E9993', borderBottom: externalDocPickerTab === "external" ? '2px solid #D57D61' : '2px solid transparent' }}>
                 其他文档
               </button>
             </div>
             {/* Search input */}
-            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e2e8f0' }}>
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e9ecef' }}>
               <input
                 type="text"
                 value={linkPickerSearch}
@@ -4296,23 +4296,23 @@ export const App = () => {
                   });
                 }
                 if (items.length === 0) {
-                  return <div style={{ padding: 16, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>无匹配结果</div>;
+                  return <div style={{ padding: 16, textAlign: 'center', color: '#9E9993', fontSize: 13 }}>无匹配结果</div>;
                 }
                 return items.map((item) => (
                   <button key={item.key} type="button"
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', borderBottom: '1px solid #f1f5f9', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#0f172a' }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', borderBottom: '1px solid #F0EEE9', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#24211F' }}
                     onClick={() => handlePickNodeForLink(item.pageIndex, item.nodeId, item.docPath, item.paragraphIndex)}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#FFFFFF')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.displayName}</div>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{item.sub}</div>
+                    <div style={{ fontSize: 12, color: '#9E9993' }}>{item.sub}</div>
                   </button>
                 ));
               })()}
               {externalDocPickerTab === "external" && (
                 externalDocsLoading ? (
-                  <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>加载中...</div>
+                  <div style={{ padding: 32, textAlign: 'center', color: '#9E9993', fontSize: 14 }}>加载中...</div>
                 ) : externalDocNodes && externalDocNodes.length > 0 ? (
                   (() => {
                     const searchLower = linkPickerSearch.trim().toLowerCase();
@@ -4346,16 +4346,16 @@ export const App = () => {
                       }
                     }
                     if (docPageMap.size === 0) {
-                      return <div style={{ padding: 16, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>无匹配结果</div>;
+                      return <div style={{ padding: 16, textAlign: 'center', color: '#9E9993', fontSize: 13 }}>无匹配结果</div>;
                     }
                     const result: React.ReactNode[] = [];
                     let docIdx = 0;
                     for (const [filePath, docInfo] of docPageMap) {
                       const isDocExpanded = expandedExternalDocs.has(filePath);
                       result.push(
-                        <button key={`doc-${docIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderBottom: '1px solid #f1f5f9', background: '#f8fafc', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#0f172a' }}
+                        <button key={`doc-${docIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderBottom: '1px solid #F0EEE9', background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#24211F' }}
                           onClick={() => { setExpandedExternalDocs(prev => { const n = new Set(prev); if (n.has(filePath)) n.delete(filePath); else n.add(filePath); return n; }); }}>
-                          <span style={{ fontSize: 11, color: '#94a3b8', width: 12 }}>{isDocExpanded ? '▾' : '▸'}</span>
+                          <span style={{ fontSize: 11, color: '#9E9993', width: 12 }}>{isDocExpanded ? '▾' : '▸'}</span>
                           <span>{docInfo.fileName}</span>
                         </button>
                       );
@@ -4365,18 +4365,18 @@ export const App = () => {
                           const expandedPages = expandedExternalDocPages[filePath] ?? new Set();
                           const isPageExpanded = expandedPages.has(pageIdx);
                           result.push(
-                            <button key={`page-${docIdx}-${pageIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '4px 8px 4px 28px', border: 'none', borderBottom: '1px solid #f1f5f9', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#475569' }}
+                            <button key={`page-${docIdx}-${pageIdx}`} type="button" style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '4px 8px 4px 28px', border: 'none', borderBottom: '1px solid #F0EEE9', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#6B6661' }}
                               onClick={() => { setExpandedExternalDocPages(prev => { const np = new Set(prev[filePath] ?? []); if (np.has(pageIdx)) np.delete(pageIdx); else np.add(pageIdx); return { ...prev, [filePath]: np }; }); }}>
-                              <span style={{ fontSize: 10, color: '#94a3b8', width: 12 }}>{isPageExpanded ? '▾' : '▸'}</span>
+                              <span style={{ fontSize: 10, color: '#9E9993', width: 12 }}>{isPageExpanded ? '▾' : '▸'}</span>
                               <span>{pageInfo.pageTitle}</span>
-                              <span style={{ fontSize: 10, color: '#94a3b8' }}>({pageInfo.nodes.length})</span>
+                              <span style={{ fontSize: 10, color: '#9E9993' }}>({pageInfo.nodes.length})</span>
                             </button>
                           );
                           if (isPageExpanded) {
                             for (const nodeInfo of pageInfo.nodes) {
                               let displayName = `${nodeInfo.type}: ${nodeInfo.id.slice(0, 30)}`;
                               result.push(
-                                <button key={`node-${docIdx}-${pageIdx}-${nodeInfo.id}`} type="button" style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px 4px 44px', border: 'none', borderBottom: '1px solid #f8fafc', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#2563eb' }}
+                                <button key={`node-${docIdx}-${pageIdx}-${nodeInfo.id}`} type="button" style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px 4px 44px', border: 'none', borderBottom: '1px solid #FFFFFF', background: 'transparent', cursor: 'pointer', fontSize: 12, color: '#D57D61' }}
                                   onClick={() => handlePickNodeForLink(pageIdx, nodeInfo.id, filePath)}
                                   onMouseEnter={(e) => (e.currentTarget.style.background = '#eff6ff')}
                                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
@@ -4392,7 +4392,7 @@ export const App = () => {
                     return result;
                   })()
                 ) : (
-                  <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>没有其他文档</div>
+                  <div style={{ padding: 32, textAlign: 'center', color: '#9E9993', fontSize: 14 }}>没有其他文档</div>
                 )
               )}
             </div>

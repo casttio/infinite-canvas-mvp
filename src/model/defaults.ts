@@ -45,10 +45,10 @@ export const createDefaultPageBounds = (): PageBounds => ({
 });
 
 export const createDefaultDocumentAppearance = (): DocumentAppearance => ({
-  pageBackground: "#ffffff",
+  pageBackground: "#F8F7F4",
   grid: {
     enabled: false,
-    color: "rgba(15, 23, 42, 0.08)",
+    color: "rgba(36, 33, 31, 0.06)",
     size: 24,
   },
   pages: {
@@ -185,10 +185,10 @@ export const createShapeNode = (
   h: 160,
   z: 1,
   shapeType,
-  fill: shapeType === "ellipse" ? "#fef3c7" : "#dbeafe",
-  stroke: "#1d4ed8",
-  strokeWidth: 2,
-  borderRadius: shapeType === "rect" ? 12 : undefined,
+  fill: "#FFFFFF",
+  stroke: "rgba(36, 33, 31, 0.22)",
+  strokeWidth: 1,
+  borderRadius: shapeType === "rect" ? 8 : undefined,
   style: {},
 });
 
@@ -214,7 +214,7 @@ export const createConnectorNode = (
   ...(options.startAnchor ? { startAnchor: options.startAnchor } : {}),
   ...(options.endNodeId ? { endNodeId: options.endNodeId } : {}),
   ...(options.endAnchor ? { endAnchor: options.endAnchor } : {}),
-  stroke: options.stroke ?? "#2563eb",
+  stroke: options.stroke ?? "#9E9993",
   strokeWidth: options.strokeWidth ?? 2,
   lineStyle: (options.lineStyle ?? "solid") as ConnectorLineStyle,
   startMarker: (options.startMarker ?? "none") as ConnectorMarker,

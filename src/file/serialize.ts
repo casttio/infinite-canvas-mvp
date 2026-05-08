@@ -194,38 +194,38 @@ export const serializeDocument = (document: DocumentFile): string => {
   <title>Infinite Canvas Document</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: #16202a; background: #eef2f6; }
+    body { margin: 0; padding: 24px; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: #24211F; background: #F8F7F4; }
     main { min-width: min-content; }
     h1 { margin: 0 0 6px; font-size: 20px; }
-    .hint { margin: 0 0 18px; color: #64748b; font-size: 13px; }
-    .page-preview { margin: 0 0 28px; overflow: hidden; border: 1px solid rgba(15, 23, 42, 0.14); background: white; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10); }
-    .page-preview-title { position: absolute; top: 10px; left: 12px; z-index: 3; display: flex; align-items: center; min-height: 34px; max-width: 360px; padding: 0 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.78); color: #0f172a; font-size: 22px; font-weight: 700; line-height: 1.25; }
+    .hint { margin: 0 0 18px; color: #6B6661; font-size: 13px; }
+    .page-preview { margin: 0 0 28px; overflow: hidden; border: 1px solid rgba(36, 33, 31, 0.14); background: white; box-shadow: 0 10px 30px rgba(36, 33, 31, 0.10); }
+    .page-preview-title { position: absolute; top: 10px; left: 12px; z-index: 3; display: flex; align-items: center; min-height: 34px; max-width: 360px; padding: 0 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.78); color: #24211F; font-size: 22px; font-weight: 700; line-height: 1.25; }
     .page-preview-canvas { position: relative; overflow: hidden; isolation: isolate; }
     .page-preview-canvas.has-grid::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background-image: linear-gradient(var(--page-grid-color) 1px, transparent 1px), linear-gradient(90deg, var(--page-grid-color) 1px, transparent 1px); background-size: var(--page-grid-size) var(--page-grid-size); }
     .canvas-node { position: absolute; z-index: 1; overflow: hidden; }
-    .preview-text-node { padding: 10px 12px; border: 1px solid rgba(15, 23, 42, 0.12); background: rgba(255, 255, 255, 0.96); color: #111827; font-size: 16px; line-height: 1.55; overflow: visible; }
+    .preview-text-node { padding: 10px 12px; border: 1px solid rgba(36, 33, 31, 0.12); background: rgba(255, 255, 255, 0.96); color: #24211F; font-size: 16px; line-height: 1.55; overflow: visible; }
     .preview-text-node p { margin: 0; min-height: 1.55em; }
     .text-block { margin: 0 0 8px; }
     .text-block:last-child { margin-bottom: 0; }
     .text-block-table-wrap { overflow: auto; max-width: 100%; }
     .text-block-table { border-collapse: collapse; table-layout: fixed; min-width: 100%; background: white; }
-    .text-block-table td { min-width: 72px; padding: 8px 10px; border: 1px solid rgba(15, 23, 42, 0.32); vertical-align: top; }
+    .text-block-table td { min-width: 72px; padding: 8px 10px; border: 1px solid rgba(36, 33, 31, 0.32); vertical-align: top; }
     .text-block-table-cell-content .text-block { margin-bottom: 6px; }
     .text-inline-image-frame img { max-width: 100%; height: auto; vertical-align: middle; }
     .preview-image-node img, .preview-frame-node iframe { display: block; width: 100%; height: 100%; border: 0; background: white; object-fit: contain; }
-    .preview-shape-node { display: flex; align-items: center; justify-content: center; padding: 12px; color: #0f172a; }
+    .preview-shape-node { display: flex; align-items: center; justify-content: center; padding: 12px; color: #24211F; }
     .preview-shape-node p { margin: 0; }
     .preview-connector-node { position: absolute; overflow: visible; pointer-events: none; }
-    .preview-frame-node { border: 1px solid rgba(15, 23, 42, 0.14); background: white; }
-    .preview-attachment-node { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 16px; border: 1px solid rgba(15, 23, 42, 0.16); background: #f8fafc; color: #475569; }
-    .preview-attachment-node strong { color: #16202a; }
-    .preview-timeline-node { padding: 12px 16px; border: 1px solid rgba(15, 23, 42, 0.12); background: #fafbfc; overflow: auto; }
+    .preview-frame-node { border: 1px solid rgba(36, 33, 31, 0.14); background: white; }
+    .preview-attachment-node { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 16px; border: 1px solid rgba(36, 33, 31, 0.16); background: #FFFFFF; color: #6B6661; }
+    .preview-attachment-node strong { color: #24211F; }
+    .preview-timeline-node { padding: 12px 16px; border: 1px solid rgba(36, 33, 31, 0.12); background: #F8F7F4; overflow: auto; }
     .preview-timeline-node .timeline-entries { display: flex; flex-direction: column; gap: 6px; }
-    .preview-timeline-node .timeline-entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(15, 23, 42, 0.06); font-size: 13px; }
-    .preview-timeline-node .timeline-entry-date { font-weight: 700; color: #475569; min-width: 52px; }
-    .preview-timeline-node .timeline-entry-title { font-weight: 600; color: #0f172a; }
-    .preview-timeline-node .timeline-entry-org { color: #64748b; font-size: 12px; }
-    .preview-timeline-node .timeline-entry-summary { width: 100%; margin: 2px 0 0; color: #475569; font-size: 12px; }
+    .preview-timeline-node .timeline-entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(36, 33, 31, 0.06); font-size: 13px; }
+    .preview-timeline-node .timeline-entry-date { font-weight: 700; color: #6B6661; min-width: 52px; }
+    .preview-timeline-node .timeline-entry-title { font-weight: 600; color: #24211F; }
+    .preview-timeline-node .timeline-entry-org { color: #6B6661; font-size: 12px; }
+    .preview-timeline-node .timeline-entry-summary { width: 100%; margin: 2px 0 0; color: #6B6661; font-size: 12px; }
   </style>
 </head>
 <body>

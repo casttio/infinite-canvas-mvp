@@ -15,7 +15,7 @@ const LEFT_GUTTER = 230;
 const RIGHT_GUTTER = 120;
 const CARD_WIDTH = 250;
 const CARD_HEIGHT = 74;
-const PALETTE = ["#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0891b2", "#4f46e5", "#be123c"];
+const PALETTE = ["#D57D61", "#65826A", "#C3A972", "#7B7484", "#6B808F", "#A88975", "#5C6773", "#B55B5B"];
 
 const escapeHtml = (value: string) =>
   value
@@ -84,7 +84,7 @@ export const generateTimelineSvg = (rows: TimelineRow[], options: TimelineOption
     }))
     .sort((left, right) => extractYear(left.date) - extractYear(right.date) || left.category.localeCompare(right.category));
   if (normalizedRows.length === 0) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${options.width ?? DEFAULT_WIDTH}" height="320" viewBox="0 0 ${options.width ?? DEFAULT_WIDTH} 320" role="img" aria-label="空时间线"><rect width="100%" height="100%" fill="#ffffff" /><text x="40" y="72" font-size="28" font-weight="800" fill="#0f172a">没有可用的时间线数据</text></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${options.width ?? DEFAULT_WIDTH}" height="320" viewBox="0 0 ${options.width ?? DEFAULT_WIDTH} 320" role="img" aria-label="空时间线"><rect width="100%" height="100%" fill="#FFFFFF" /><text x="40" y="72" font-size="28" font-weight="800" fill="#24211F">没有可用的时间线数据</text></svg>`;
   }
   const size = getTimelineSize(normalizedRows, options);
   const palette = options.palette ?? PALETTE;
@@ -110,7 +110,7 @@ export const generateTimelineSvg = (rows: TimelineRow[], options: TimelineOption
     const y = laneY(category);
     const color = palette[index % palette.length];
     return `<g>
-      <rect x="0" y="${y}" width="${size.width}" height="${size.laneHeight}" fill="${index % 2 === 0 ? "#f8fafc" : "#ffffff"}" />
+      <rect x="0" y="${y}" width="${size.width}" height="${size.laneHeight}" fill="${index % 2 === 0 ? "#F4EFEA" : "#ffffff"}" />
       <rect x="28" y="${y + 22}" width="8" height="${size.laneHeight - 44}" rx="4" fill="${color}" opacity="0.82" />
       <text x="52" y="${y + 58}" class="lane-title">${escapeHtml(category)}</text>
       <line x1="${plotLeft}" y1="${y + size.laneHeight / 2}" x2="${plotRight}" y2="${y + size.laneHeight / 2}" stroke="${color}" stroke-width="2" opacity="0.25" />
@@ -177,17 +177,17 @@ export const generateTimelineHtml = (rows: TimelineRow[], options: TimelineOptio
   <title>${escapeHtml(options.title?.trim() || "时间线")}</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { margin: 0; width: 100%; min-height: 100%; background: #ffffff; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; color: #0f172a; }
+    html, body { margin: 0; width: 100%; min-height: 100%; background: #ffffff; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; color: #24211F; }
     body { overflow: auto; }
     svg { display: block; width: ${size.width}px; height: ${size.height}px; }
     a { cursor: pointer; text-decoration: none; }
-    .chart-title { font-size: 34px; font-weight: 800; fill: #0f172a; }
-    .chart-subtitle { font-size: 16px; fill: #64748b; }
-    .year-label { font-size: 14px; font-weight: 700; fill: #475569; }
-    .lane-title { font-size: 21px; font-weight: 800; fill: #0f172a; }
-    .item-title { font-size: 17px; font-weight: 700; fill: #0f172a; }
-    .item-year { font-size: 13px; font-weight: 800; fill: #64748b; }
-    .timeline-item:hover rect { filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.18)); }
+    .chart-title { font-size: 34px; font-weight: 800; fill: #24211F; }
+    .chart-subtitle { font-size: 16px; fill: #6B6661; }
+    .year-label { font-size: 14px; font-weight: 700; fill: #6B6661; }
+    .lane-title { font-size: 21px; font-weight: 800; fill: #24211F; }
+    .item-title { font-size: 17px; font-weight: 700; fill: #24211F; }
+    .item-year { font-size: 13px; font-weight: 800; fill: #6B6661; }
+    .timeline-item:hover rect { filter: drop-shadow(0 8px 16px rgba(36, 33, 31, 0.18)); }
   </style>
 </head>
 <body>
