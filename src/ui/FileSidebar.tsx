@@ -41,6 +41,11 @@ const FILE_SUFFIXES = [".icanvas.html", ".icanvas.json", ".onetoc2", ".html", ".
 const GRAPH_MIN_ZOOM = 0.6;
 const GRAPH_MAX_ZOOM = 1.6;
 
+const stripExtension = (name: string) => {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+};
+
 const getDepth = (relativePath: string) =>
   relativePath.length === 0 ? 0 : relativePath.split(/[\\/]/).length - 1;
 
@@ -693,7 +698,7 @@ export const FileSidebar = ({
               onDrop={(event) => handleDirectoryDrop(event, entry.path)}
             >
               <span className="file-tree-caret">{expanded ? "▾" : "▸"}</span>
-              <span className="file-tree-name">{entry.name}</span>
+              <span className="file-tree-name">{stripExtension(entry.name)}</span>
             </button>
             {expanded ? <div className="file-tree-children">{renderEntries(entry.children)}</div> : null}
           </div>
@@ -780,7 +785,7 @@ export const FileSidebar = ({
           onContextMenu={(event) => onFileContextMenu(event, entry.path, getEditableBaseName(entry.name))}
         >
           <span className="file-tree-bullet">•</span>
-          <span className="file-tree-name">{entry.name}</span>
+          <span className="file-tree-name">{stripExtension(entry.name)}</span>
         </button>
       );
     });

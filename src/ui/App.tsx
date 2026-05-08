@@ -5268,6 +5268,13 @@ export const App = () => {
                     }}
                     onNodeLinkClick={handleNodeLinkClick}
                     onRequestInsertNodeLink={(x, y) => node.id === editingNodeId && handleRequestInsertNodeLink(node.id, x, y)}
+                    onRequestSelectAll={() => {
+                      const pageNodeIds = documentFile.nodes
+                        .filter((n) => n.pageIndex === node.pageIndex)
+                        .map((n) => n.id);
+                      setSelectedNodeIds(pageNodeIds);
+                      setEditingNodeId(null);
+                    }}
                     highlightQuery={highlightQuery}
                   />
                 );

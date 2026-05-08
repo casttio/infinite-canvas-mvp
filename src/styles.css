@@ -392,7 +392,7 @@ button:disabled {
   width: 2px;
   height: 44px;
   border-radius: 999px;
-  background: rgba(37, 99, 235, 0.32);
+  background: rgba(213, 125, 97, 0.32);
   transform: translateY(-50%);
   transition: background 150ms ease, height 150ms ease;
 }
@@ -407,7 +407,7 @@ button:disabled {
 .graph-sidebar-resize-handle:focus-visible::after,
 .file-sidebar.graph-resizable.resizing .graph-sidebar-resize-handle::after {
   height: 72px;
-  background: rgba(37, 99, 235, 0.62);
+  background: rgba(213, 125, 97, 0.62);
 }
 
 .page-sidebar-column {
@@ -547,11 +547,11 @@ button:disabled {
 }
 
 .file-tree-row.file {
-  cursor: grab;
+  cursor: pointer;
 }
 
 .file-tree-row.file:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .file-tree-row.file.dragging {
@@ -1962,7 +1962,7 @@ button:disabled {
 }
 
 .connector-item.selected line {
-  filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.38));
+  filter: drop-shadow(0 0 3px rgba(213, 125, 97, 0.38));
 }
 
 .connector-endpoint {
@@ -2032,7 +2032,7 @@ button:disabled {
   right: 0;
   height: calc(10px * var(--inverse-zoom));
   background: transparent;
-  cursor: grab;
+  cursor: pointer;
   z-index: 2;
 }
 
@@ -2054,7 +2054,7 @@ button:disabled {
 }
 
 .text-node-drag-handle:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .text-node-content {
@@ -2197,13 +2197,13 @@ button:disabled {
 }
 
 .text-node.editing .text-block-table td.table-cell-range-selected {
-  background: rgba(59, 130, 246, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.3);
+  background: rgba(213, 125, 97, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(213, 125, 97, 0.3);
 }
 
 .text-node.editing .text-block.block-range-selected {
-  background: rgba(59, 130, 246, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2);
+  background: rgba(213, 125, 97, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(213, 125, 97, 0.2);
 }
 
 .text-block-table .text-inline-image-frame {
@@ -2217,7 +2217,7 @@ button:disabled {
   right: -1px;
   bottom: -1px;
   width: calc(3px * var(--inverse-zoom));
-  background: rgba(59, 130, 246, 0.8);
+  background: rgba(213, 125, 97, 0.8);
   pointer-events: none;
 }
 
@@ -2441,7 +2441,7 @@ button:disabled {
 }
 
 .resize-edge:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(213, 125, 97, 0.08);
   border-color: transparent;
 }
 

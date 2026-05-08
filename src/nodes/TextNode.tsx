@@ -93,6 +93,7 @@ interface TextNodeProps {
   onNavigateTo?: (pageIndex: number, nodeId: string) => void;
   onNodeLinkClick?: (pageIndex: number, nodeId: string, x: number, y: number, documentPath?: string) => void;
   onRequestInsertNodeLink?: (x: number, y: number) => void;
+  onRequestSelectAll?: () => void;
 }
 type EditorSelectionState =
   | { type: "none" }
@@ -166,6 +167,7 @@ export const TextNode = ({
   onNavigateTo,
   onNodeLinkClick,
   onRequestInsertNodeLink,
+  onRequestSelectAll,
 }: TextNodeProps) => {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
@@ -178,7 +180,7 @@ export const TextNode = ({
   const activeTableCellRef = useRef<HTMLTableCellElement | null>(null);
   const selectAllCycleRef = useRef<{
     scopeKey: string;
-    stage: "line" | "cell" | "block" | "table";
+    stage: "line" | "cell" | "block" | "table" | "node";
   } | null>(null);
   const tableContextMenuRef = useRef<HTMLDivElement | null>(null);
   const textContextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1225,7 +1227,7 @@ export const TextNode = ({
     hoveredColumnCellRef.current = cell;
     hoveredColumnCellRef.current?.classList.add("column-resize-hover");
     if (editorRef.current) {
-      editorRef.current.style.cursor = cell ? "col-resize" : "";
+      editorRef.current.style.cursor = cell ? "ew-resize" : "";
     }
   };
   const setTableResizeHover = (wrapper: HTMLElement | null) => {
@@ -1709,6 +1711,72 @@ export const TextNode = ({
     updateEditorSelection({ type: "none" });
     return true;
   };
+  const deleteSelectedTableStructure = () => {
+    if (editorSelection.type !== "cell-range" || !editorRef.current) {
+      return false;
+    }
+    const wrapper = editorRef.current.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
+    if (!(wrapper instanceof HTMLElement)) {
+      return false;
+    }
+    const table = getTableElement(wrapper);
+    if (!table || table.rows.length === 0) {
+      return false;
+    }
+    const rowCount = table.rows.length;
+    const columnCount = table.rows.item(0)?.cells.length ?? 0;
+    if (columnCount === 0) {
+      return false;
+    }
+    const allRowsSelected = editorSelection.startRow === 0
+      && editorSelection.endRow >= rowCount - 1;
+    const allColumnsSelected = editorSelection.startColumn === 0
+      && editorSelection.endColumn >= columnCount - 1;
+    if (!allRowsSelected && !allColumnsSelected) {
+      return false;
+    }
+    if (allRowsSelected && allColumnsSelected) {
+      const nextFocusTarget = wrapper.nextElementSibling ?? wrapper.previousElementSibling;
+      wrapper.remove();
+      if (nextFocusTarget instanceof HTMLElement) {
+        placeCaretInside(nextFocusTarget);
+      } else if (editorRef.current.children.length === 0) {
+        editorRef.current.innerHTML = EMPTY_PARAGRAPH_HTML;
+        placeCaretAtEnd();
+      }
+      clearTableCellSelection();
+      commitDraftFromDom();
+      editorRef.current.focus();
+      return true;
+    }
+    if (allColumnsSelected) {
+      const firstRow = Math.max(0, editorSelection.startRow);
+      const lastRow = Math.min(rowCount - 1, editorSelection.endRow);
+      const fallbackRow = table.rows.item(firstRow - 1) ?? table.rows.item(lastRow + 1);
+      const fallbackColumn = Math.min(editorSelection.startColumn, Math.max(0, (fallbackRow?.cells.length ?? 1) - 1));
+      const fallbackCell = fallbackRow?.cells.item(fallbackColumn);
+      for (let rowIndex = lastRow; rowIndex >= firstRow; rowIndex -= 1) {
+        table.rows.item(rowIndex)?.remove();
+      }
+      if (table.rows.length === 0) {
+        wrapper.remove();
+        if (!editorRef.current.querySelector("[data-block-kind]")) {
+          editorRef.current.innerHTML = EMPTY_PARAGRAPH_HTML;
+          placeCaretAtEnd();
+        }
+      } else {
+        const firstParagraph = fallbackCell?.querySelector("p") ?? table.rows.item(Math.min(firstRow, table.rows.length - 1))?.querySelector("td p");
+        if (firstParagraph instanceof HTMLElement) {
+          placeCaretInside(firstParagraph);
+        }
+      }
+      clearTableCellSelection();
+      commitDraftFromDom();
+      editorRef.current.focus();
+      return true;
+    }
+    return false;
+  };
   const clearMixedRange = () => {
     if (editorSelection.type !== "mixed-range" || !editorRef.current) {
       return false;
@@ -2161,12 +2229,18 @@ export const TextNode = ({
       }
     }
 
-    // If no valid text selection, insert at caret or end
+    // If no valid text selection, insert at collapsed caret or end
     if (!range) {
-      placeCaretAtEnd();
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        range = sel.getRangeAt(0);
+      if (selection && selection.rangeCount > 0 && editorRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+        range = selection.getRangeAt(0);
+      } else {
+        placeCaretAtEnd();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          range = sel.getRangeAt(0);
+        }
+      }
+      if (range) {
         const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(label)}</a>`;
         const wrapper = document.createElement("div");
         wrapper.innerHTML = linkHtml;
@@ -2176,8 +2250,8 @@ export const TextNode = ({
         }
         range.insertNode(frag);
         range.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(range);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
         draftHtmlRef.current = editorRef.current.innerHTML;
         syncDimensionsToContent({ expandTables: true });
         onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
@@ -2516,13 +2590,38 @@ export const TextNode = ({
     return true;
   };
   const handleProgressiveSelectAll = () => {
+    const currentCycle = selectAllCycleRef.current;
+    if (currentCycle?.stage === "block") {
+      const editor = editorRef.current;
+      if (editor) {
+        let maxIndex = -1;
+        for (const child of editor.children) {
+          const index = child instanceof HTMLElement ? Number(child.dataset.topBlockIndex) : NaN;
+          if (Number.isInteger(index) && index > maxIndex) {
+            maxIndex = index;
+          }
+        }
+        if (maxIndex >= 0) {
+          applyBlockRangeSelection(0, maxIndex);
+          window.getSelection()?.removeAllRanges();
+          selectAllCycleRef.current = { scopeKey: currentCycle.scopeKey, stage: "node" };
+          return true;
+        }
+      }
+    }
+    if (currentCycle?.stage === "node") {
+      selectAllCycleRef.current = null;
+      if (onRequestSelectAll) {
+        onRequestSelectAll();
+        return true;
+      }
+    }
     const scope = getSelectAllScope();
     if (!scope) {
       return false;
     }
-    const currentCycle = selectAllCycleRef.current;
     const sameScope = currentCycle?.scopeKey === scope.key;
-    if (!sameScope || currentCycle.stage === "table" || currentCycle.stage === "block") {
+    if (!sameScope || currentCycle?.stage === "table") {
       selectAllCycleRef.current = { scopeKey: scope.key, stage: "line" };
       return selectCurrentLineOrBlockContents(scope);
     }
@@ -2831,17 +2930,25 @@ export const TextNode = ({
     }
     if (event.key === "Delete" || event.key === "Backspace") {
       if (editorSelection.type === "cell-range") {
-        const wrapper = editorRef.current?.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
-        const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
-        if (table) {
-          for (let columnIndex = editorSelection.endColumn; columnIndex >= editorSelection.startColumn; columnIndex -= 1) {
-            const cell = table.rows.item(0)?.cells.item(columnIndex);
-            if (!(cell instanceof HTMLTableCellElement)) {
-              break;
-            }
-            activeTableCellRef.current = cell;
-            if (!deleteTableColumnAtSelection()) {
-              break;
+        if (!deleteSelectedTableStructure()) {
+          const wrapper = editorRef.current?.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
+          const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
+          if (table) {
+            const allRowsSelected = editorSelection.startRow === 0
+              && editorSelection.endRow === table.rows.length - 1;
+            if (allRowsSelected) {
+              for (let columnIndex = editorSelection.endColumn; columnIndex >= editorSelection.startColumn; columnIndex -= 1) {
+                const cell = table.rows.item(0)?.cells.item(columnIndex);
+                if (!(cell instanceof HTMLTableCellElement)) {
+                  break;
+                }
+                activeTableCellRef.current = cell;
+                if (!deleteTableColumnAtSelection()) {
+                  break;
+                }
+              }
+            } else {
+              clearSelectedTableCells();
             }
           }
         }
@@ -2979,10 +3086,10 @@ export const TextNode = ({
         suppressBlurCommitRef.current = false;
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [tableContextMenu]);
@@ -3025,10 +3132,10 @@ export const TextNode = ({
         suppressBlurCommitRef.current = false;
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [textContextMenu]);
