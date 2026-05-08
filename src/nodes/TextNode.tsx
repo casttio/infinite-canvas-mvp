@@ -2210,6 +2210,25 @@ export const TextNode = ({
       placement,
     );
   };
+  /** Cross-platform range insertion that works around Windows Chromium
+   *  bug where insertNode into a collapsed text-node range places
+   *  content at the parent element start instead of the cursor position. */
+  const insertFragmentAtRange = (range: Range, frag: DocumentFragment) => {
+    const { startContainer, startOffset } = range;
+    if (range.collapsed && startContainer.nodeType === Node.TEXT_NODE) {
+      const text = startContainer as Text;
+      const parent = text.parentNode!;
+      const after = text.splitText(startOffset);
+      const last = frag.lastChild;
+      parent.insertBefore(frag, after);
+      range.setStartAfter(last || after);
+      range.collapse(true);
+    } else {
+      if (!range.collapsed) range.deleteContents();
+      range.insertNode(frag);
+      range.collapse(false);
+    }
+  };
   const insertNodeLinkAtSelection = (cmd: TextEditorCommand) => {
     if (!editorRef.current || cmd.nodeLinkPage == null || !cmd.nodeLinkId) return;
 
@@ -2254,8 +2273,7 @@ export const TextNode = ({
         while (wrapper.firstChild) {
           frag.appendChild(wrapper.firstChild);
         }
-        range.insertNode(frag);
-        range.collapse(false);
+        insertFragmentAtRange(range, frag);
         selection?.removeAllRanges();
         selection?.addRange(range);
         draftHtmlRef.current = editorRef.current.innerHTML;
@@ -2277,10 +2295,7 @@ export const TextNode = ({
     while (wrapper.firstChild) {
       frag.appendChild(wrapper.firstChild);
     }
-    range.insertNode(frag);
-
-    // Collapse to end
-    range.collapse(false);
+    insertFragmentAtRange(range, frag);
     selection!.removeAllRanges();
     selection!.addRange(range);
 
