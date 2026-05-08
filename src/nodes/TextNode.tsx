@@ -2658,6 +2658,11 @@ export const TextNode = ({
     event.stopPropagation();
     suppressBlurCommitRef.current = true;
     rememberActiveTableCell(cell);
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !editorRef.current?.contains(sel.anchorNode)) {
+      pendingCaretPointRef.current = { x: event.clientX, y: event.clientY };
+      placeCaretFromPoint();
+    }
     saveCurrentSelectionRange();
     setSelectionAnchor(location);
     setTextContextMenu(null);
