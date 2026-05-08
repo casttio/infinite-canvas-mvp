@@ -2213,7 +2213,7 @@ export const TextNode = ({
   const insertNodeLinkAtSelection = (cmd: TextEditorCommand) => {
     if (!editorRef.current || cmd.nodeLinkPage == null || !cmd.nodeLinkId) return;
 
-    restoreSavedSelectionRange();
+    const restored = restoreSavedSelectionRange();
 
     const label = cmd.nodeLinkLabel || cmd.nodeLinkId;
     const docAttr = cmd.nodeLinkDoc ? ` data-node-link-doc="${escapeAttribute(cmd.nodeLinkDoc)}"` : "";
@@ -2233,6 +2233,12 @@ export const TextNode = ({
     if (!range) {
       if (selection && selection.rangeCount > 0 && editorRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)) {
         range = selection.getRangeAt(0);
+      } else if (!restored && activeTableCellRef.current && editorRef.current.contains(activeTableCellRef.current)) {
+        placeCaretInside(activeTableCellRef.current);
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          range = sel.getRangeAt(0);
+        }
       } else {
         placeCaretAtEnd();
         const sel = window.getSelection();
