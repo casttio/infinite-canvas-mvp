@@ -173,6 +173,7 @@ export const TextNode = ({
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
   const appliedContentRevisionRef = useRef(contentRevision);
   const savedSelectionRangeRef = useRef<Range | null>(null);
+  const cursorPathRef = useRef<{ path: number[]; offset: number } | null>(null);
   const pendingCaretPointRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredColumnCellRef = useRef<HTMLTableCellElement | null>(null);
   const hoveredTableWrapRef = useRef<HTMLElement | null>(null);
@@ -337,6 +338,55 @@ export const TextNode = ({
       editor.focus();
       selection.removeAllRanges();
       selection.addRange(savedRange.cloneRange());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** Save cursor position as DOM child-node indices + text offset.
+   *  Survives text-node normalization because it stores numeric paths
+   *  instead of raw DOM references. */
+  const saveCursorPath = (): boolean => {
+    const sel = window.getSelection();
+    const editor = editorRef.current;
+    if (!sel || !sel.rangeCount || !editor) return false;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return false;
+    const path: number[] = [];
+    let node: Node | null = range.startContainer;
+    while (node && node !== editor) {
+      const parent = node.parentNode;
+      if (!parent) return false;
+      let index = -1;
+      for (let i = 0; i < parent.childNodes.length; i += 1) {
+        if (parent.childNodes[i] === node) { index = i; break; }
+      }
+      if (index === -1) return false;
+      path.unshift(index);
+      node = parent;
+    }
+    cursorPathRef.current = { path, offset: range.startOffset };
+    return true;
+  };
+  const restoreCursorPath = (): boolean => {
+    const editor = editorRef.current;
+    const saved = cursorPathRef.current;
+    if (!editor || !saved) return false;
+    let node: Node = editor;
+    for (const index of saved.path) {
+      if (index >= node.childNodes.length) return false;
+      node = node.childNodes[index];
+    }
+    try {
+      const range = document.createRange();
+      range.setStart(node, Math.min(saved.offset, node.textContent?.length ?? 0));
+      range.collapse(true);
+      const sel = window.getSelection();
+      if (sel) {
+        editor.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
       return true;
     } catch {
       return false;
@@ -2232,7 +2282,7 @@ export const TextNode = ({
   const insertNodeLinkAtSelection = (cmd: TextEditorCommand) => {
     if (!editorRef.current || cmd.nodeLinkPage == null || !cmd.nodeLinkId) return;
 
-    const restored = restoreSavedSelectionRange();
+    const restored = restoreSavedSelectionRange() || restoreCursorPath();
 
     const label = cmd.nodeLinkLabel || cmd.nodeLinkId;
     const docAttr = cmd.nodeLinkDoc ? ` data-node-link-doc="${escapeAttribute(cmd.nodeLinkDoc)}"` : "";
@@ -2724,6 +2774,7 @@ export const TextNode = ({
   const requestInsertNodeLinkFromTextContextMenu = () => {
     const context = textContextMenu;
     saveCurrentSelectionRange();
+    saveCursorPath();
     setTextContextMenu(null);
     if (context) {
       onRequestInsertNodeLink?.(context.x, context.y);
@@ -2736,6 +2787,7 @@ export const TextNode = ({
       rememberActiveTableCell(cell);
     }
     saveCurrentSelectionRange();
+    saveCursorPath();
     setTableContextMenu(null);
     if (context) {
       onRequestInsertNodeLink?.(context.x, context.y);
