@@ -2327,6 +2327,21 @@ export const TextNode = ({
     const linkHtml = `<a class="rich-text-link" href="#" data-node-link-page="${cmd.nodeLinkPage}" data-node-link-id="${escapeAttribute(cmd.nodeLinkId)}"${docAttr} data-node-link-label="${escapeAttribute(label)}">${escapeHtml(displayText)}</a>`;
 
     if (hasSelection) insertRange.deleteContents();
+
+    // After deleteContents, if the range lands on an element node (e.g. empty <td>),
+    // move the insertion point into the first text-bearing child so insertNode
+    // doesn't break table structure.
+    if (insertRange.startContainer.nodeType !== Node.TEXT_NODE) {
+      const container = insertRange.startContainer as Element;
+      const firstP = container.querySelector?.("p") ?? container;
+      let target: Node = firstP;
+      while (target.firstChild) target = target.firstChild;
+      try {
+        insertRange.setStart(target, target.nodeType === Node.TEXT_NODE ? (target as Text).length : 0);
+        insertRange.collapse(true);
+      } catch { /* leave range as-is */ }
+    }
+
     editorRef.current.focus();
     insertFragmentAtRange(insertRange, buildFrag(linkHtml));
     const sel = window.getSelection();
