@@ -220,7 +220,8 @@ export const TimelineNode = ({
         onHeightChange?.(totalHeight);
       }
     }
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.entries, density, entryOverrides]);
 
   return (
     <div
