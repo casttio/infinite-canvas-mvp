@@ -2421,7 +2421,7 @@ export const TextNode = ({
         table.replaceWith(wrapper);
       }
     });
-    const hasStructuredContent = root.querySelector("table, [data-block-kind], p, div, ul, ol, li, blockquote, h1, h2, h3, h4, h5, h6");
+    const hasStructuredContent = root.querySelector("table, [data-block-kind], p, div, ul, ol, li, blockquote, h1, h2, h3, h4, h5, h6, .text-inline-image-frame");
     return hasStructuredContent ? root.innerHTML : "";
   };
   const insertTableAtCaret = (placement: "caret" | "end" = "caret") => {
@@ -3909,7 +3909,13 @@ export const TextNode = ({
         onBlur={(event) => {
           saveCurrentSelectionRange();
           if (pendingSelectionRef.current || suppressBlurCommitRef.current) {
-            restoreEditorFocus();
+            // If blur target is inside the editor (e.g. contenteditable="false" child),
+            // the browser handles re-focus natively; calling focus() would destroy
+            // the selection around non-editable elements like inline images.
+            const relatedTarget = event.relatedTarget;
+            if (!(relatedTarget instanceof Node && editorRef.current?.contains(relatedTarget))) {
+              restoreEditorFocus();
+            }
             return;
           }
           const relatedTarget = event.relatedTarget;
