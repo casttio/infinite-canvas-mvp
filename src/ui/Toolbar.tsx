@@ -864,7 +864,7 @@ export const Toolbar = ({
           </div>
           <div className="highlight-presets">
             {highlightPresets.map((color, slotIndex) => (
-              <React.Fragment key={slotIndex}>
+              <Fragment key={slotIndex}>
                 <button
                   type="button"
                   className={`highlight-preset-dot ${highlightColor === color ? "active" : ""}`}
@@ -892,7 +892,7 @@ export const Toolbar = ({
                   style={{ display: "none" }}
                   data-preserve-editor-focus="true"
                 />
-              </React.Fragment>
+              </Fragment>
             ))}
           </div>
           <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
