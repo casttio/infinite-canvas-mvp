@@ -161,8 +161,11 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}, highlightQu
   return wrapInlineStyle(wrapLink(markedText, inline), inline);
 };
 
-const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}, highlightQuery?: string): string =>
-  `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets, highlightQuery)).join("") || "<br />"}</p></div>`;
+const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}, highlightQuery?: string): string => {
+  const tag = paragraph.blockTag ?? "p";
+  const blockTagAttr = paragraph.blockTag ? ` data-block-tag="${paragraph.blockTag}"` : "";
+  return `<div class="text-block text-block-paragraph" data-block-kind="paragraph"${blockTagAttr}><${tag}>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets, highlightQuery)).join("") || "<br />"}</${tag}></div>`;
+};
 
 const tableCellToHtml = (
   cell: RichTextTableCell,
@@ -435,12 +438,13 @@ const appendInlineNode = (node: Node, content: RichTextInline[]) => {
   Array.from(node.childNodes).forEach((child) => appendInlineNode(child, content));
 };
 
-const paragraphFromNodes = (nodes: Node[]) => {
+const paragraphFromNodes = (nodes: Node[], blockTag?: string) => {
   const content: RichTextInline[] = [];
   nodes.forEach((node) => appendInlineNode(node, content));
 
   return {
     type: "paragraph" as const,
+    blockTag,
     content: ensureParagraphContent(content),
   };
 };
@@ -635,7 +639,29 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
         blocks.push(paragraphFromPreElement(node));
         return;
       }
-      blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
+      // If this is the text-block wrapper div, look inside for the actual block tag
+      if (node instanceof HTMLDivElement && node.classList.contains("text-block-paragraph")) {
+        const inner = node.firstElementChild;
+        if (inner instanceof HTMLElement) console.log("[parse] wrapper inner tag:", inner.tagName.toLowerCase(), "innerHTML:", inner.innerHTML.substring(0, 100));
+        if (inner instanceof HTMLElement) {
+          const innerTag = inner.tagName.toLowerCase();
+          // Prefer explicit data-block-tag attribute (more robust against browser quirks)
+          const explicitTag = node.dataset.blockTag;
+          const tag = explicitTag || innerTag;
+          if (tag === "p") {
+            blocks.push(...parseBlocksFromNodes(Array.from(inner.childNodes)));
+          } else {
+            blocks.push(paragraphFromNodes(Array.from(inner.childNodes), tag));
+          }
+        }
+        return;
+      }
+      const tag = node.tagName.toLowerCase();
+      if (tag === "p" || tag === "div") {
+        blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
+      } else {
+        blocks.push(paragraphFromNodes(Array.from(node.childNodes), tag));
+      }
       return;
     }
 

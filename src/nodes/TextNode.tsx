@@ -8,7 +8,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import type { ResizeHandle } from "../editor/resize";
-import type { AssetMap, RichTextBlock, RichTextDoc, RichTextInline, TextNode as TextNodeType } from "../model/types";
+import type { AssetMap, RichTextBlock, RichTextDoc, RichTextInline, RichTextParagraph, TextNode as TextNodeType } from "../model/types";
 import {
   createRichTextTableHtml,
   htmlToRichTextDoc,
@@ -94,6 +94,7 @@ interface TextNodeProps {
   onNodeLinkClick?: (pageIndex: number, nodeId: string, x: number, y: number, documentPath?: string) => void;
   onRequestInsertNodeLink?: (x: number, y: number) => void;
   onRequestSelectAll?: () => void;
+  onSelectionFormatChange?: (format: { fontFamily: string | null; fontSize: string | null }) => void;
 }
 type EditorSelectionState =
   | { type: "none" }
@@ -168,6 +169,7 @@ export const TextNode = ({
   onNodeLinkClick,
   onRequestInsertNodeLink,
   onRequestSelectAll,
+  onSelectionFormatChange,
 }: TextNodeProps) => {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const draftHtmlRef = useRef(richTextDocToHtml(node.content, assets));
@@ -329,6 +331,100 @@ export const TextNode = ({
     }
     savedSelectionRangeRef.current = selection!.getRangeAt(0).cloneRange();
     return true;
+  };
+
+  const lastReportedFormatRef = useRef<{ fontFamily: string | null; fontSize: string | null } | null>(null);
+  const reportRafRef = useRef<number>(0);
+
+  const reportSelectionFormat = () => {
+    if (!onSelectionFormatChange || !editorRef.current) return;
+    // Throttle with requestAnimationFrame — selectionchange fires per-pixel during drag
+    if (reportRafRef.current) cancelAnimationFrame(reportRafRef.current);
+    reportRafRef.current = requestAnimationFrame(() => {
+      reportRafRef.current = 0;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (!editorRef.current!.contains(range.commonAncestorContainer)) return;
+
+      // Collect all text nodes in the selection
+      const textNodes: Text[] = [];
+      if (range.collapsed) {
+        // Collapsed: just use the anchor node
+        const anchor = selection.anchorNode;
+        if (anchor instanceof Text) textNodes.push(anchor);
+        else if (anchor instanceof HTMLElement) {
+          const first = anchor.querySelector("*") ?? anchor;
+          if (first instanceof Text) textNodes.push(first);
+        }
+      } else {
+        const root = range.commonAncestorContainer;
+        if (root instanceof Text) {
+          if (range.intersectsNode(root)) {
+            textNodes.push(root);
+          }
+        } else {
+          const walker = document.createTreeWalker(
+            root,
+            NodeFilter.SHOW_TEXT,
+          );
+          let node = walker.nextNode();
+          while (node) {
+            if (range.intersectsNode(node)) textNodes.push(node as Text);
+            node = walker.nextNode();
+          }
+        }
+      }
+
+      const getFontFamily = (el: Element | null): string | null => {
+        while (el && el !== editorRef.current) {
+          const ff = (el as HTMLElement).style?.fontFamily;
+          if (ff) return ff;
+          const dataFf = (el as HTMLElement).dataset?.fontFamily;
+          if (dataFf) return dataFf;
+          const faceAttr = (el as HTMLElement).getAttribute?.("face");
+          if (faceAttr) return faceAttr;
+          el = el.parentElement;
+        }
+        return null;
+      };
+      const getFontSize = (el: Element | null): string | null => {
+        while (el && el !== editorRef.current) {
+          const fs = (el as HTMLElement).style?.fontSize;
+          if (fs) return fs.replace("px", "");
+          const dataFs = (el as HTMLElement).dataset?.fontSize;
+          if (dataFs) return dataFs.replace("px", "");
+          const sizeAttr = (el as HTMLElement).getAttribute?.("size");
+          if (sizeAttr) return sizeAttr;
+          // Fallback to computed style for elements styled via CSS (h1, pre, etc.)
+          const computed = el instanceof HTMLElement ? window.getComputedStyle(el).fontSize : null;
+          if (computed) return computed.replace("px", "");
+          el = el.parentElement;
+        }
+        return null;
+      };
+
+      const families = new Set<string>();
+      const sizes = new Set<string>();
+      for (const tn of textNodes) {
+        const el = tn.parentElement;
+        const ff = getFontFamily(el);
+        const fs = getFontSize(el);
+        if (ff) families.add(ff);
+        if (fs) sizes.add(fs);
+      }
+
+      const next = {
+        fontFamily: families.size === 1 ? [...families][0] : families.size > 1 ? "mixed" : null,
+        fontSize: sizes.size === 1 ? [...sizes][0] : sizes.size > 1 ? "mixed" : null,
+      };
+      // Only notify when values actually change
+      const prev = lastReportedFormatRef.current;
+      if (!prev || prev.fontFamily !== next.fontFamily || prev.fontSize !== next.fontSize) {
+        lastReportedFormatRef.current = next;
+        onSelectionFormatChange!(next);
+      }
+    });
   };
   const restoreSavedSelectionRange = (): Range | null => {
     const editor = editorRef.current;
@@ -908,7 +1004,10 @@ export const TextNode = ({
       return htmlToRichTextDoc(draftHtmlRef.current);
     }
     draftHtmlRef.current = editorRef.current.innerHTML;
-    return htmlToRichTextDoc(draftHtmlRef.current);
+    const doc = htmlToRichTextDoc(draftHtmlRef.current);
+    const tags = doc.content.map((b: RichTextBlock) => b.type === "paragraph" ? ((b as RichTextParagraph).blockTag ?? "p") : "table").join(",");
+    console.log("[commit] blockTags:", tags, "html:", draftHtmlRef.current.substring(0, 300));
+    return doc;
   };
   const getTableElement = (wrapper: HTMLElement) => {
     const table = Array.from(wrapper.children).find((child) => child instanceof HTMLTableElement);
@@ -1381,6 +1480,63 @@ export const TextNode = ({
       activeTableCellRef.current = selectionCell;
     }
   };
+  const applyBlockStyleToModel = (nextCommand: TextEditorCommand): boolean => {
+    if (!editorRef.current || nextCommand.type !== "apply-block-style") {
+      return false;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !isSelectionInsideEditor(selection)) {
+      return false;
+    }
+    const range = selection.getRangeAt(0);
+    const style = getBlockStyleForCommand(nextCommand);
+    if (!style) return false;
+
+    const currentDoc = getCurrentRichTextDoc();
+    const blockElements = editorRef.current.querySelectorAll<HTMLElement>("[data-block-kind]");
+    const selectedBlockIndices: number[] = [];
+
+    if (range.collapsed) {
+      // Collapsed: find the block containing the cursor
+      let el: HTMLElement | null = range.startContainer instanceof HTMLElement
+        ? range.startContainer
+        : range.startContainer.parentElement;
+      while (el && el !== editorRef.current) {
+        if (el.dataset?.blockKind !== undefined) {
+          const index = [...blockElements].indexOf(el);
+          if (index >= 0) selectedBlockIndices.push(index);
+          break;
+        }
+        el = el.parentElement;
+      }
+    } else {
+      blockElements.forEach((el, index) => {
+        if (range.intersectsNode(el)) {
+          selectedBlockIndices.push(index);
+        }
+      });
+    }
+
+    if (selectedBlockIndices.length === 0) return false;
+
+    const options = { removeBold: false, removeItalic: false, removeUnderline: false, removeStrike: false };
+    const nextDoc: RichTextDoc = {
+      ...currentDoc,
+      content: currentDoc.content.map((block, index) => {
+        if (block.type !== "paragraph" || !selectedBlockIndices.includes(index)) return block;
+        return mapTextInBlocks([block], (inline) => applyTextCommandToLeaf(inline, nextCommand, options))[0];
+      }),
+    };
+
+    draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
+    editorRef.current.innerHTML = draftHtmlRef.current;
+    syncDimensionsToContent();
+    onDraftChange(nextDoc, { history: "checkpoint" });
+    saveCurrentSelectionRange();
+    editorRef.current.focus();
+    return true;
+  };
+
   const applyInlineFormatCommand = (nextCommand: TextEditorCommand) => {
     if (!editorRef.current) {
       return false;
@@ -1390,6 +1546,14 @@ export const TextNode = ({
     }
     if (applyFormatCommandToSelectedTableCells(nextCommand)) {
       return true;
+    }
+    if (nextCommand.type === "apply-block-style") {
+      // Use model-based approach instead of execCommand to avoid
+      // the contentRevision effect overwriting the DOM
+      if (applyBlockStyleToModel(nextCommand)) {
+        return true;
+      }
+      // If model approach fails, fall through to execCommand
     }
     if (!restoreSavedSelectionRange()) {
       if (!saveCurrentSelectionRange()) {
@@ -1449,7 +1613,6 @@ export const TextNode = ({
     if (nextCommand.type === "apply-block-style" && typeof nextCommand.blockStyle === "string") {
       const style = getBlockStyleForCommand(nextCommand);
       if (style) {
-        document.execCommand("formatBlock", false, style.tag);
         if (style.fontSize) {
           document.execCommand("fontSize", false, "7");
           const selection = window.getSelection();
@@ -1494,6 +1657,7 @@ export const TextNode = ({
       document.execCommand("strikeThrough");
     }
     draftHtmlRef.current = editorRef.current.innerHTML;
+    console.log("[cmd] DOM after", nextCommand.type, ":", draftHtmlRef.current);
     syncDimensionsToContent();
     onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
     saveCurrentSelectionRange();
@@ -2135,8 +2299,14 @@ export const TextNode = ({
       return;
     }
     const range = document.createRange();
-    range.selectNodeContents(editorRef.current);
-    range.collapse(false);
+    const lastBlock = editorRef.current.lastChild;
+    if (lastBlock) {
+      range.selectNodeContents(lastBlock);
+      range.collapse(false);
+    } else {
+      range.selectNodeContents(editorRef.current);
+      range.collapse(false);
+    }
     selection.removeAllRanges();
     selection.addRange(range);
     saveCurrentSelectionRange();
@@ -3080,6 +3250,7 @@ export const TextNode = ({
     if (!editing && editorRef.current) {
       appliedContentRevisionRef.current = contentRevision;
       draftHtmlRef.current = richTextDocToHtml(node.content, assets, highlightQuery);
+      console.log("[display] blockTags from node.content:", node.content.content.map((b: RichTextBlock) => b.type === "paragraph" ? ((b as RichTextParagraph).blockTag ?? "p") : "table").join(","), "html:", draftHtmlRef.current.substring(0, 300));
       editorRef.current.innerHTML = draftHtmlRef.current;
       syncDimensionsToContent();
     }
@@ -3105,6 +3276,7 @@ export const TextNode = ({
     const handleSelectionChange = () => {
       syncActiveTableCellFromSelection();
       saveCurrentSelectionRange();
+      reportSelectionFormat();
     };
     document.addEventListener("selectionchange", handleSelectionChange);
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
@@ -3599,7 +3771,11 @@ export const TextNode = ({
             }
             if (href && href !== "#") {
               event.stopPropagation();
-              window.open(href, "_blank", "noreferrer");
+              if (window.electronApp?.openExternal) {
+                window.electronApp.openExternal(href);
+              } else {
+                window.open(href, "_blank", "noreferrer");
+              }
               return;
             }
           }

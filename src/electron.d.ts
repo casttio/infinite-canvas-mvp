@@ -200,6 +200,7 @@ declare global {
       dumpPageHtml: () => Promise<string>;
       isWindowAlwaysOnTop: () => Promise<boolean>;
       toggleWindowAlwaysOnTop: () => Promise<boolean>;
+      openExternal: (url: string) => Promise<void>;
     };
   }
 }

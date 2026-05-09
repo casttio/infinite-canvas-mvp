@@ -74,6 +74,7 @@ export type RichTextInline = RichTextTextLeaf | RichTextBreakLeaf | RichTextImag
 
 export interface RichTextParagraph extends UnknownFields {
   type: "paragraph";
+  blockTag?: string;
   content: RichTextInline[];
 }
 

@@ -55,4 +55,5 @@ contextBridge.exposeInMainWorld("electronApp", {
   },
   isWindowAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
   toggleWindowAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
 });

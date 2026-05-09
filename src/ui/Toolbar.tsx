@@ -15,7 +15,7 @@ const FONT_OPTIONS = [
   { label: "黑体", value: '"SimHei", sans-serif' },
 ];
 
-const FONT_SIZE_OPTIONS = ["12", "14", "15", "16", "18", "24", "32"];
+const FONT_SIZE_OPTIONS = ["8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22", "24", "26", "28", "32", "36", "42", "48", "60", "64", "72", "96", "128"];
 type ToolbarTab = "file" | "search" | "home" | "insert" | "table";
 type ConnectorStyleControls = {
   stroke: string;
@@ -24,6 +24,8 @@ type ConnectorStyleControls = {
   endMarker: "none" | "arrow" | "circle";
 };
 const BLOCK_STYLE_STORAGE_KEY = "icanvas.block-style-presets";
+const BLOCK_STYLE_SLOTS_KEY = "icanvas.block-style-slots";
+const DEFAULT_BLOCK_STYLE_SLOTS = ["title1", "title2", "title3"];
 type BlockStylePreset = {
   id: string;
   label: string;
@@ -65,6 +67,15 @@ const readBlockStylePresets = () => {
   }
 };
 
+const readBlockStyleSlots = (): string[] => {
+  if (typeof window === "undefined") return DEFAULT_BLOCK_STYLE_SLOTS;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BLOCK_STYLE_SLOTS_KEY) ?? "null");
+    if (Array.isArray(parsed) && parsed.length === 3) return parsed;
+  } catch { /* ignore */ }
+  return DEFAULT_BLOCK_STYLE_SLOTS;
+};
+
 export type SearchScope = "current-page" | "current-document" | "workspace";
 
 interface SearchResultRow {
@@ -90,6 +101,8 @@ interface ToolbarProps {
   canInsertTableColumn: boolean;
   canFormatText: boolean;
   canGenerateTimeline: boolean;
+  selectionFontFamily?: string | null;
+  selectionFontSize?: string | null;
   onNewDocument: () => void;
   onOpenDocument: () => void;
   onSaveDocument: () => void;
@@ -211,24 +224,31 @@ export const Toolbar = ({
   onSearchResultClick,
   onSearchKeyDown,
   onSearchClose,
+  selectionFontFamily,
+  selectionFontSize,
 }: ToolbarProps) => {
   const [activeTab, setActiveTab] = useState<ToolbarTab>("home");
-  const [fontFamily, setFontFamily] = useState(FONT_OPTIONS[0].value);
-  const [fontSize, setFontSize] = useState("11");
   const [textColor, setTextColor] = useState("#24211F");
   const [highlightColor, setHighlightColor] = useState("#fef200");
   const [showBlockStyleMenu, setShowBlockStyleMenu] = useState(false);
   const [showBlockStyleEditor, setShowBlockStyleEditor] = useState(false);
   const [blockStylePresets, setBlockStylePresets] = useState(readBlockStylePresets);
+  const [blockStyleSlots, setBlockStyleSlots] = useState(readBlockStyleSlots);
+  const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(null);
   const [editingBlockStyleId, setEditingBlockStyleId] = useState(DEFAULT_BLOCK_STYLE_PRESETS[0].id);
   const blockStyleMenuRef = useRef<HTMLDivElement | null>(null);
+  const fontSizeMenuRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
+  const [showFontSizeMenu, setShowFontSizeMenu] = useState(false);
   const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
+  const textColorInputRef = useRef<HTMLInputElement | null>(null);
+  const highlightColorInputRef = useRef<HTMLInputElement | null>(null);
 
   const closeBlockStyleMenu = () => {
     setShowBlockStyleMenu(false);
     setShowBlockStyleEditor(false);
+    setEditingSlotIndex(null);
   };
 
   useEffect(() => {
@@ -257,6 +277,33 @@ export const Toolbar = ({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [showBlockStyleMenu]);
+
+  useEffect(() => {
+    if (!showFontSizeMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && fontSizeMenuRef.current?.contains(target)) {
+        return;
+      }
+      setShowFontSizeMenu(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowFontSizeMenu(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showFontSizeMenu]);
 
   // Close search dropdown on outside click / Escape
   useEffect(() => {
@@ -292,14 +339,26 @@ export const Toolbar = ({
     }
   }, [activeTab, searchQuery]);
 
+  // selectionFontFamily/selectionFontSize come from the active editor selection.
+  // null = no info (editing ended) → show default
+  // "mixed" = multiple values in selection → show empty
+  const displayFontFamily = selectionFontFamily && selectionFontFamily !== "mixed" ? selectionFontFamily : selectionFontFamily === "mixed" ? "" : FONT_OPTIONS[0].value;
+  const displayFontSize = selectionFontSize && selectionFontSize !== "mixed" ? selectionFontSize : selectionFontSize === "mixed" ? "" : "15";
+
   const applyFontFamily = (value: string) => {
-    setFontFamily(value);
     onSetFontFamily(value);
   };
 
-  const applyFontSize = (value: string) => {
-    setFontSize(value);
-    onSetFontSize(`${value}px`);
+  const commitFontSize = (value: string) => {
+    const num = parseFloat(value);
+    if (!isNaN(num) && num > 0) {
+      onSetFontSize(`${num}px`);
+    }
+  };
+
+  const applyFontSizeFromMenu = (value: string) => {
+    commitFontSize(value);
+    setShowFontSizeMenu(false);
   };
 
   const applyTextColor = (value: string) => {
@@ -307,9 +366,32 @@ export const Toolbar = ({
     onSetTextColor(value);
   };
 
+  const openTextColorPicker = () => {
+    const input = textColorInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+
+    input.click();
+  };
+
   const applyHighlightColor = (value: string) => {
     setHighlightColor(value);
     onSetHighlightColor(value);
+  };
+  const openHighlightColorPicker = () => {
+    const input = highlightColorInputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+    input.click();
   };
 
   const persistBlockStylePresets = (nextPresets: BlockStylePreset[]) => {
@@ -326,6 +408,25 @@ export const Toolbar = ({
 
   const resetBlockStylePresets = () => {
     persistBlockStylePresets(DEFAULT_BLOCK_STYLE_PRESETS);
+  };
+
+  const persistBlockStyleSlots = (nextSlots: string[]) => {
+    setBlockStyleSlots(nextSlots);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BLOCK_STYLE_SLOTS_KEY, JSON.stringify(nextSlots));
+    }
+  };
+
+  const assignSlotStyle = (slotIndex: number, presetId: string) => {
+    const next = [...blockStyleSlots];
+    next[slotIndex] = presetId;
+    persistBlockStyleSlots(next);
+  };
+
+  const openBlockStyleMenuForSlot = (slotIndex: number) => {
+    setEditingSlotIndex(slotIndex);
+    setShowBlockStyleMenu(true);
+    setShowBlockStyleEditor(false);
   };
 
   const getBlockStyleCommandPreset = (preset: BlockStylePreset) => ({
@@ -556,26 +657,181 @@ export const Toolbar = ({
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canUndo} onClick={onUndo} aria-label="撤销">↶</button>
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canRedo} onClick={onRedo} aria-label="重做">↷</button>
         <div className="text-format-toolbar" data-preserve-editor-focus="true">
-          <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
+          <select
+            className="text-format-select font-select"
+            value={displayFontFamily}
+            disabled={!canFormatText}
+            onChange={(event) => applyFontFamily(event.currentTarget.value)}
+            aria-label="字体"
+          >
+            {FONT_OPTIONS.map((font) => (
+              <option key={font.value} value={font.value}>{font.label}</option>
+            ))}
+          </select>
+          <div className="toolbar-popover-anchor" ref={fontSizeMenuRef}>
             <button
               type="button"
-              className={showBlockStyleMenu ? "toolbar-button block-style-button active" : "toolbar-button block-style-button"}
+              className="text-format-select size-select size-menu-button"
               disabled={!canFormatText}
               onPointerDown={(event) => event.preventDefault()}
-              onClick={() => setShowBlockStyleMenu((current) => !current)}
+              onClick={() => setShowFontSizeMenu((current) => !current)}
+              aria-label="字号"
               aria-haspopup="menu"
-              aria-expanded={showBlockStyleMenu}
+              aria-expanded={showFontSizeMenu}
             >
-              <span className="block-style-icon">A</span>
-              <span>样式</span>
-              <span className="block-style-caret">⌄</span>
+              <span>{displayFontSize}</span>
+              <span className="size-menu-caret">⌄</span>
             </button>
+            {showFontSizeMenu ? (
+              <div className="size-menu" role="menu">
+                {FONT_SIZE_OPTIONS.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    className={size === displayFontSize ? "size-menu-item active" : "size-menu-item"}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => applyFontSizeFromMenu(size)}
+                    role="menuitem"
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="text-format-button text-format-bold"
+            disabled={!canFormatText}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onToggleBold}
+            aria-label="加粗"
+          >
+            B
+          </button>
+          <button
+            type="button"
+            className="text-format-button text-format-italic"
+            disabled={!canFormatText}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onToggleItalic}
+            aria-label="斜体"
+          >
+            I
+          </button>
+          <button
+            type="button"
+            className="text-format-button text-format-underline"
+            disabled={!canFormatText}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onToggleUnderline}
+            aria-label="下划线"
+          >
+            U
+          </button>
+          <button
+            type="button"
+            className="text-format-button text-format-strike"
+            disabled={!canFormatText}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onToggleStrike}
+            aria-label="删除线"
+          >
+            ab
+          </button>
+          <div className="text-format-color-split" style={{ "--format-color": textColor } as CSSProperties}>
+            <button
+              type="button"
+              className="text-format-color-main"
+              disabled={!canFormatText}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => applyTextColor(textColor)}
+              aria-label="应用文字颜色"
+            >
+              <span>A</span>
+            </button>
+            <button
+              type="button"
+              className="text-format-color-menu"
+              disabled={!canFormatText}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={openTextColorPicker}
+              aria-label="选择文字颜色"
+            >
+              <span className="text-format-color-caret">⌄</span>
+            </button>
+            <input
+              ref={textColorInputRef}
+              className="text-format-color-input"
+              type="color"
+              value={textColor}
+              disabled={!canFormatText}
+              onChange={(event) => applyTextColor(event.currentTarget.value)}
+              aria-label="文字颜色选择器"
+              tabIndex={-1}
+            />
+          </div>
+          <div className="text-format-color-split" style={{ "--format-color": highlightColor } as CSSProperties}>
+            <button
+              type="button"
+              className="text-format-color-main"
+              disabled={!canFormatText}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => applyHighlightColor(highlightColor)}
+              aria-label="应用高亮颜色"
+            >
+              <span className="highlight-pen-icon" />
+            </button>
+            <button
+              type="button"
+              className="text-format-color-menu"
+              disabled={!canFormatText}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={openHighlightColorPicker}
+              aria-label="选择高亮颜色"
+            >
+              <span className="text-format-color-caret">⌄</span>
+            </button>
+            <input
+              ref={highlightColorInputRef}
+              className="text-format-color-input"
+              type="color"
+              value={highlightColor}
+              disabled={!canFormatText}
+              onChange={(event) => applyHighlightColor(event.currentTarget.value)}
+              aria-label="高亮颜色选择器"
+              tabIndex={-1}
+            />
+          </div>
+          <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
+            <div className="block-style-quick-bar">
+              {[0, 1, 2].map((slotIndex) => {
+                const preset = blockStylePresets.find((p) => p.id === blockStyleSlots[slotIndex]) ?? blockStylePresets[0];
+                return (
+                  <button
+                    key={slotIndex}
+                    type="button"
+                    className="block-style-quick-btn"
+                    disabled={!canFormatText}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => onApplyBlockStyle(preset.id, getBlockStyleCommandPreset(preset))}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      openBlockStyleMenuForSlot(slotIndex);
+                    }}
+                    aria-label={preset.label}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
             {showBlockStyleMenu ? (
               <div className="block-style-menu" role="menu">
                 {showBlockStyleEditor ? (
                   <div className="block-style-editor">
                     <div className="block-style-editor-header">
-                      <span>样式预设</span>
+                      <span>{editingSlotIndex !== null ? `快捷样式 ${editingSlotIndex + 1}` : '样式预设'}</span>
                       <button type="button" onClick={closeBlockStyleMenu}>完成</button>
                     </div>
                     <label>
@@ -661,12 +917,17 @@ export const Toolbar = ({
                       <button
                         key={style.id}
                         type="button"
-                        className={`block-style-menu-item ${style.className}`}
+                        className={`block-style-menu-item ${style.className} ${editingSlotIndex !== null && blockStyleSlots[editingSlotIndex] === style.id ? "active" : ""}`}
                         style={getBlockStylePreviewStyle(style)}
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() => {
-                          onApplyBlockStyle(style.id, getBlockStyleCommandPreset(style));
-                          closeBlockStyleMenu();
+                          if (editingSlotIndex !== null) {
+                            assignSlotStyle(editingSlotIndex, style.id);
+                            closeBlockStyleMenu();
+                          } else {
+                            onApplyBlockStyle(style.id, getBlockStyleCommandPreset(style));
+                            closeBlockStyleMenu();
+                          }
                         }}
                       >
                         {style.label}
@@ -699,94 +960,6 @@ export const Toolbar = ({
               </div>
             ) : null}
           </div>
-          <select
-            className="text-format-select font-select"
-            value={fontFamily}
-            disabled={!canFormatText}
-            onChange={(event) => applyFontFamily(event.currentTarget.value)}
-            aria-label="字体"
-          >
-            {FONT_OPTIONS.map((font) => (
-              <option key={font.value} value={font.value}>{font.label}</option>
-            ))}
-          </select>
-          <select
-            className="text-format-select size-select"
-            value={fontSize}
-            disabled={!canFormatText}
-            onChange={(event) => applyFontSize(event.currentTarget.value)}
-            aria-label="字号"
-          >
-            {FONT_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="text-format-button text-format-bold"
-            disabled={!canFormatText}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onToggleBold}
-            aria-label="加粗"
-          >
-            B
-          </button>
-          <button
-            type="button"
-            className="text-format-button text-format-italic"
-            disabled={!canFormatText}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onToggleItalic}
-            aria-label="斜体"
-          >
-            I
-          </button>
-          <button
-            type="button"
-            className="text-format-button text-format-underline"
-            disabled={!canFormatText}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onToggleUnderline}
-            aria-label="下划线"
-          >
-            U
-          </button>
-          <button
-            type="button"
-            className="text-format-button text-format-strike"
-            disabled={!canFormatText}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onToggleStrike}
-            aria-label="删除线"
-          >
-            ab
-          </button>
-          <label
-            className="text-format-color-button text-color-control"
-            style={{ "--format-color": textColor } as CSSProperties}
-            aria-label="文字颜色"
-          >
-            <span>A</span>
-            <input
-              type="color"
-              value={textColor}
-              disabled={!canFormatText}
-              onChange={(event) => applyTextColor(event.currentTarget.value)}
-            />
-          </label>
-          <label
-            className="text-format-color-button highlight-color-control"
-            style={{ "--format-color": highlightColor } as CSSProperties}
-            aria-label="高亮颜色"
-          >
-            <span className="highlight-pen-icon" />
-            <input
-              type="color"
-              value={highlightColor}
-              disabled={!canFormatText}
-              onChange={(event) => applyHighlightColor(event.currentTarget.value)}
-            />
-          </label>
         </div>
         <label className="zoom-control">
           <span>{Math.round(zoom * 100)}%</span>

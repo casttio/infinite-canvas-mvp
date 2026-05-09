@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard, shell } = require("electron");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("path");
@@ -569,7 +569,13 @@ const createMainWindow = () => {
   });
 
   mainWindow = window;
-  window.on("closed", () => {
+  // Ctrl+Shift+I / Cmd+Shift+I to open DevTools
+  mainWindow.webContents.on("before-input-event", (_e, input) => {
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === "i") {
+      mainWindow?.webContents.toggleDevTools();
+    }
+  });
+  mainWindow.on("closed", () => {
     if (mainWindow === window) {
       mainWindow = null;
     }
@@ -640,6 +646,10 @@ app.whenReady().then(() => {
     const nextAlwaysOnTop = !window.isAlwaysOnTop();
     window.setAlwaysOnTop(nextAlwaysOnTop);
     return nextAlwaysOnTop;
+  });
+
+  ipcMain.handle("shell:open-external", async (_event, url) => {
+    shell.openExternal(url);
   });
 
   ipcMain.handle("runtime:update-state", async (_event, state = {}) => {

@@ -723,6 +723,7 @@ export const App = () => {
   const documentFileRef = useRef<DocumentFile>(initialDocumentRef.current);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [selectionFormat, setSelectionFormat] = useState<{ fontFamily: string | null; fontSize: string | null } | null>(null);
   const [interaction, setInteraction] = useState<InteractionState>({ type: "none" });
   const [connectorMode, setConnectorMode] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -3159,6 +3160,7 @@ export const App = () => {
   useEffect(() => {
     if (editingNodeId === null) {
       setEditorCommand(null);
+      setSelectionFormat(null);
     }
   }, [editingNodeId]);
 
@@ -4098,6 +4100,8 @@ export const App = () => {
           onSearchResultClick={handleSearchResultClick}
           onSearchKeyDown={handleSearchKeyDown}
           onSearchClose={handleSearchClose}
+          selectionFontFamily={selectionFormat?.fontFamily ?? null}
+          selectionFontSize={selectionFormat?.fontSize ?? null}
         />
       </div>
 
@@ -5274,6 +5278,9 @@ export const App = () => {
                         .map((n) => n.id);
                       setSelectedNodeIds(pageNodeIds);
                       setEditingNodeId(null);
+                    }}
+                    onSelectionFormatChange={(fmt) => {
+                      if (node.id === editingNodeId) setSelectionFormat(fmt);
                     }}
                     highlightQuery={highlightQuery}
                   />
