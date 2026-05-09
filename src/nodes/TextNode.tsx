@@ -324,6 +324,34 @@ export const TextNode = ({
     }
     return editor.contains(range.startContainer) && editor.contains(range.endContainer);
   };
+  const rangeHasTextNode = (range: Range | null) => {
+    if (!range || range.collapsed) {
+      return false;
+    }
+    const root = range.commonAncestorContainer;
+    if (root instanceof Text) {
+      return (root.textContent ?? "").length > 0 && range.intersectsNode(root);
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if ((node.textContent ?? "").length > 0 && range.intersectsNode(node)) {
+        return true;
+      }
+      node = walker.nextNode();
+    }
+    return false;
+  };
+  const hasActiveTextSelectionRange = () => {
+    const selection = window.getSelection();
+    if (isSelectionInsideEditor(selection)) {
+      const range = selection!.getRangeAt(0);
+      if (rangeHasTextNode(range)) {
+        return true;
+      }
+    }
+    return isRangeInsideEditor(savedSelectionRangeRef.current) && rangeHasTextNode(savedSelectionRangeRef.current);
+  };
   const saveCurrentSelectionRange = () => {
     const selection = window.getSelection();
     if (!isSelectionInsideEditor(selection)) {
@@ -1541,11 +1569,14 @@ export const TextNode = ({
     if (!editorRef.current) {
       return false;
     }
-    if (applyFormatCommandToSelectedTableCellModel(nextCommand)) {
-      return true;
-    }
-    if (applyFormatCommandToSelectedTableCells(nextCommand)) {
-      return true;
+    const hasTextSelectionRange = hasActiveTextSelectionRange();
+    if (!hasTextSelectionRange) {
+      if (applyFormatCommandToSelectedTableCellModel(nextCommand)) {
+        return true;
+      }
+      if (applyFormatCommandToSelectedTableCells(nextCommand)) {
+        return true;
+      }
     }
     if (nextCommand.type === "apply-block-style") {
       // Use model-based approach instead of execCommand to avoid
@@ -3276,6 +3307,9 @@ export const TextNode = ({
     const handleSelectionChange = () => {
       syncActiveTableCellFromSelection();
       saveCurrentSelectionRange();
+      if (!pendingSelectionRef.current && editorSelectionRef.current.type !== "none" && hasActiveTextSelectionRange()) {
+        updateEditorSelection({ type: "none" });
+      }
       reportSelectionFormat();
     };
     document.addEventListener("selectionchange", handleSelectionChange);
