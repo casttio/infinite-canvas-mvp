@@ -3721,13 +3721,11 @@ export const TextNode = ({
             startTableResize(event, resizeWrapper);
             return;
           }
-          if (!editing) {
-            const nodeResizeHandle = getNodeResizeHandle(event);
-            if (nodeResizeHandle) {
-              onSelect();
-              onResizePointerDown(event, nodeResizeHandle);
-              return;
-            }
+          const nodeResizeHandle = getNodeResizeHandle(event);
+          if (nodeResizeHandle) {
+            onSelect();
+            onResizePointerDown(event, nodeResizeHandle);
+            return;
           }
           const cell = target instanceof HTMLTableCellElement
             ? target
@@ -3859,7 +3857,7 @@ export const TextNode = ({
               : null;
           const wrapper = target instanceof HTMLElement ? getTableResizeWrapper(event, target) : null;
           const resizeCell = cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null;
-          const nodeResizeHandle = !editing && !wrapper && !resizeCell ? getNodeResizeHandle(event) : null;
+          const nodeResizeHandle = !wrapper && !resizeCell ? getNodeResizeHandle(event) : null;
           setTableResizeHover(wrapper instanceof HTMLElement ? wrapper : null);
           setColumnResizeHover(resizeCell);
           setNodeResizeHover(nodeResizeHandle);
