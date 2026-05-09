@@ -642,13 +642,21 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
       // If this is the text-block wrapper div, look inside for the actual block tag
       if (node instanceof HTMLDivElement && node.classList.contains("text-block-paragraph")) {
         const inner = node.firstElementChild;
-        if (inner instanceof HTMLElement) console.log("[parse] wrapper inner tag:", inner.tagName.toLowerCase(), "innerHTML:", inner.innerHTML.substring(0, 100));
+        // Handle the case where text is directly in wrapper div (no <p> wrapping),
+        // which can happen when browser paste bypasses preventDefault or after errors.
+        if (!inner) {
+          blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
+          return;
+        }
         if (inner instanceof HTMLElement) {
           const innerTag = inner.tagName.toLowerCase();
           // Prefer explicit data-block-tag attribute (more robust against browser quirks)
           const explicitTag = node.dataset.blockTag;
           const tag = explicitTag || innerTag;
-          if (tag === "p") {
+          // Treat <br> as paragraph (bogus blockTag from corrupted paste)
+          if (tag === "br") {
+            blocks.push(...parseBlocksFromNodes(Array.from(node.childNodes)));
+          } else if (tag === "p") {
             blocks.push(...parseBlocksFromNodes(Array.from(inner.childNodes)));
           } else {
             blocks.push(paragraphFromNodes(Array.from(inner.childNodes), tag));

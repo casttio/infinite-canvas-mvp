@@ -5155,18 +5155,23 @@ export const App = () => {
               "--page-grid-size": `${documentFile.appearance.grid.size}px`,
             } as CSSProperties}
           >
-            <div
-              className={[
-                "page-sheet",
-                documentFile.appearance.grid.enabled ? "has-grid" : "",
-                "active",
-              ].filter(Boolean).join(" ")}
-              style={{
-                top: "0px",
-                height: `${documentFile.appearance.pages.height}px`,
-                backgroundColor: documentFile.appearance.pageBackground,
-              }}
-            />
+            {Array.from({ length: documentFile.appearance.pages.count }, (_, i) => {
+              const top = i * (documentFile.appearance.pages.height + documentFile.appearance.pages.gap);
+              return (
+                <div key={i}
+                  className={[
+                    "page-sheet",
+                    documentFile.appearance.grid.enabled ? "has-grid" : "",
+                    "active",
+                  ].filter(Boolean).join(" ")}
+                  style={{
+                    top: `${top}px`,
+                    height: `${documentFile.appearance.pages.height}px`,
+                    backgroundColor: documentFile.appearance.pageBackground,
+                  }}
+                />
+              );
+            })}
           </div>
           <ConnectorLayer
             connectors={visiblePageConnectors}

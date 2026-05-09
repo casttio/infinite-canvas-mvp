@@ -5,7 +5,7 @@
   --font-mono: "JetBrains Mono", "Courier New", monospace;
 
   /* ── Core palette: warm paper & sepia ── */
-  --bg-app: #F8F7F4;
+  --bg-app: #F0EDE8;
   --bg-surface: #FFFFFF;
   --bg-hover: #F0EEE9;
   --bg-active: #E8E5DF;
@@ -195,6 +195,8 @@ button:disabled {
   justify-content: center;
   gap: 0.24rem;
   background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .sidebar-menu-button.active,
@@ -240,6 +242,8 @@ button:disabled {
   padding: 0;
   border-radius: 6px;
   background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .rail-page-button {
@@ -250,6 +254,8 @@ button:disabled {
   padding: 0;
   border-radius: 6px;
   background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .rail-page-sheet,
@@ -433,6 +439,8 @@ button:disabled {
   padding: 0.75rem;
   border-radius: 12px;
   background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-sm);
   min-height: 0;
@@ -1792,6 +1800,51 @@ button:disabled {
   color: var(--text-muted);
   font-size: 0.875rem;
   font-weight: 500;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 28px;
+  background: var(--border-base);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.toolbar-view-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-view-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border-base);
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.toolbar-grid-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-grid-size input[type="range"] {
+  width: 56px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--primary-base);
+}
+
+.toolbar-grid-size span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-width: 1.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .zoom-control {

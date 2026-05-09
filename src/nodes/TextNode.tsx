@@ -3301,6 +3301,24 @@ export const TextNode = ({
     return () => editor.removeEventListener("load", handleImageLoad, true);
   }, [assets, editing, node.content]);
   useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !editing) return;
+    // Native listener with { passive: false } so preventDefault works
+    const handleBeforeInput = (event: Event) => {
+      const inputEvent = event as InputEvent;
+      const guard = middlePasteGuardRef.current;
+      if (
+        guard &&
+        performance.now() <= guard.until &&
+        inputEvent.inputType?.startsWith("insertFromPaste")
+      ) {
+        event.preventDefault();
+      }
+    };
+    editor.addEventListener("beforeinput", handleBeforeInput, { passive: false });
+    return () => editor.removeEventListener("beforeinput", handleBeforeInput);
+  }, [editing]);
+  useEffect(() => {
     if (!editing) {
       return;
     }
@@ -3876,12 +3894,13 @@ export const TextNode = ({
           onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "coalesce" });
         }}
         onBeforeInput={(event) => {
-          const nativeEvent = event.nativeEvent as InputEvent;
+          const nativeEvent = event.nativeEvent;
           const guard = middlePasteGuardRef.current;
           if (
-            nativeEvent.inputType.startsWith("insertFromPaste") &&
             guard &&
-            performance.now() <= guard.until
+            nativeEvent &&
+            performance.now() <= guard.until &&
+            (nativeEvent as InputEvent).inputType.startsWith("insertFromPaste")
           ) {
             event.preventDefault();
           }

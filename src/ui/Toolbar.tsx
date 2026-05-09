@@ -16,7 +16,7 @@ const FONT_OPTIONS = [
 ];
 
 const FONT_SIZE_OPTIONS = ["8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22", "24", "26", "28", "32", "36", "42", "48", "60", "64", "72", "96", "128"];
-type ToolbarTab = "file" | "search" | "home" | "insert" | "table";
+type ToolbarTab = "file" | "search" | "home" | "insert" | "table" | "view";
 type ConnectorStyleControls = {
   stroke: string;
   strokeWidth: number;
@@ -244,6 +244,8 @@ export const Toolbar = ({
   const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
   const textColorInputRef = useRef<HTMLInputElement | null>(null);
   const highlightColorInputRef = useRef<HTMLInputElement | null>(null);
+  const bgColorInputRef = useRef<HTMLInputElement | null>(null);
+  const gridColorInputRef = useRef<HTMLInputElement | null>(null);
 
   const closeBlockStyleMenu = () => {
     setShowBlockStyleMenu(false);
@@ -513,6 +515,92 @@ export const Toolbar = ({
               )}
             </div>
           )}
+        </div>
+      );
+    }
+
+    if (activeTab === "view") {
+      const openBgColorPicker = () => {
+        bgColorInputRef.current?.click();
+      };
+      const openGridColorPicker = () => {
+        gridColorInputRef.current?.click();
+      };
+      return (
+        <div className="toolbar-group">
+          <div className="toolbar-view-controls">
+            <button
+              type="button"
+              className="toolbar-button"
+              onClick={openBgColorPicker}
+              title="页面背景色"
+              style={{ gap: 6 }}
+            >
+              <span className="toolbar-view-swatch" style={{ background: pageBackground }} />
+              页面颜色
+            </button>
+            <input
+              ref={bgColorInputRef}
+              type="color"
+              value={pageBackground}
+              onChange={(event) => onSetPageBackground(event.currentTarget.value)}
+              data-preserve-editor-focus="true"
+              style={{ display: "none" }}
+            />
+            <button
+              type="button"
+              className={`toolbar-button ${gridEnabled ? "text-format-bold" : ""}`}
+              onClick={() => onSetGridEnabled(!gridEnabled)}
+              aria-pressed={gridEnabled}
+              title="网格背景"
+            >
+              网格
+            </button>
+            {gridEnabled && (
+              <>
+                <button
+                  type="button"
+                  className="toolbar-button"
+                  onClick={openGridColorPicker}
+                  title="网格颜色"
+                >
+                  <span className="toolbar-view-swatch" style={{ background: gridColor }} />
+                </button>
+                <input
+                  ref={gridColorInputRef}
+                  type="color"
+                  value={gridColor}
+                  onChange={(event) => onSetGridColor(event.currentTarget.value)}
+                  data-preserve-editor-focus="true"
+                  style={{ display: "none" }}
+                />
+                <label className="toolbar-grid-size" title="网格间距">
+                  <input
+                    type="range"
+                    min={8}
+                    max={64}
+                    step={2}
+                    value={gridSize}
+                    onChange={(event) => onSetGridSize(Number(event.currentTarget.value))}
+                    data-preserve-editor-focus="true"
+                  />
+                  <span>{gridSize}</span>
+                </label>
+              </>
+            )}
+          </div>
+          <label className="zoom-control">
+            <span>{Math.round(zoom * 100)}%</span>
+            <input
+              type="range"
+              min={0}
+              max={MAX_ZOOM_SLIDER_VALUE}
+              step={1}
+              value={zoomToSliderValue(zoom)}
+              onChange={(event) => onZoomChange(sliderValueToZoom(Number(event.currentTarget.value)))}
+              aria-label="缩放"
+            />
+          </label>
         </div>
       );
     }
@@ -961,18 +1049,6 @@ export const Toolbar = ({
             ) : null}
           </div>
         </div>
-        <label className="zoom-control">
-          <span>{Math.round(zoom * 100)}%</span>
-          <input
-            type="range"
-            min={0}
-            max={MAX_ZOOM_SLIDER_VALUE}
-            step={1}
-            value={zoomToSliderValue(zoom)}
-            onChange={(event) => onZoomChange(sliderValueToZoom(Number(event.currentTarget.value)))}
-            aria-label="缩放"
-          />
-        </label>
       </div>
     );
   };
@@ -984,6 +1060,7 @@ export const Toolbar = ({
           { id: "file", label: "文件" },
           { id: "search", label: "搜索" },
           { id: "home", label: "开始" },
+          { id: "view", label: "视图" },
           { id: "insert", label: "插入" },
           { id: "table", label: "表格" },
         ].map((tab) => (

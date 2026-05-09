@@ -45,7 +45,7 @@ export const createDefaultPageBounds = (): PageBounds => ({
 });
 
 export const createDefaultDocumentAppearance = (): DocumentAppearance => ({
-  pageBackground: "#F8F7F4",
+  pageBackground: "#F8F8F6",
   grid: {
     enabled: false,
     color: "rgba(36, 33, 31, 0.06)",
