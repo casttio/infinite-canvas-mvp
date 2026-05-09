@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { MAX_ZOOM_SLIDER_VALUE, sliderValueToZoom, zoomToSliderValue } from "../editor/viewport";
 
@@ -16,6 +16,17 @@ const FONT_OPTIONS = [
 ];
 
 const FONT_SIZE_OPTIONS = ["8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22", "24", "26", "28", "32", "36", "42", "48", "60", "64", "72", "96", "128"];
+
+const HIGHLIGHT_PRESETS_STORAGE_KEY = "icanvas.highlight-presets";
+const DEFAULT_HIGHLIGHT_PRESETS = ["#fef08a", "#bbf7d0", "#bfdbfe"];
+
+const readHighlightPresets = () => {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(HIGHLIGHT_PRESETS_STORAGE_KEY) ?? "null");
+    if (Array.isArray(parsed) && parsed.length === 3) return parsed;
+  } catch { /* ignore */ }
+  return DEFAULT_HIGHLIGHT_PRESETS;
+};
 type ToolbarTab = "file" | "search" | "home" | "insert" | "table" | "view";
 type ConnectorStyleControls = {
   stroke: string;
@@ -243,9 +254,10 @@ export const Toolbar = ({
   const [showFontSizeMenu, setShowFontSizeMenu] = useState(false);
   const editingBlockStyle = blockStylePresets.find((preset) => preset.id === editingBlockStyleId) ?? blockStylePresets[0];
   const textColorInputRef = useRef<HTMLInputElement | null>(null);
-  const highlightColorInputRef = useRef<HTMLInputElement | null>(null);
   const bgColorInputRef = useRef<HTMLInputElement | null>(null);
   const gridColorInputRef = useRef<HTMLInputElement | null>(null);
+  const [highlightPresets, setHighlightPresets] = useState(readHighlightPresets);
+  const highlightPresetInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const closeBlockStyleMenu = () => {
     setShowBlockStyleMenu(false);
@@ -385,15 +397,6 @@ export const Toolbar = ({
   const applyHighlightColor = (value: string) => {
     setHighlightColor(value);
     onSetHighlightColor(value);
-  };
-  const openHighlightColorPicker = () => {
-    const input = highlightColorInputRef.current;
-    if (!input) return;
-    if (typeof input.showPicker === "function") {
-      input.showPicker();
-      return;
-    }
-    input.click();
   };
 
   const persistBlockStylePresets = (nextPresets: BlockStylePreset[]) => {
@@ -859,37 +862,38 @@ export const Toolbar = ({
               tabIndex={-1}
             />
           </div>
-          <div className="text-format-color-split" style={{ "--format-color": highlightColor } as CSSProperties}>
-            <button
-              type="button"
-              className="text-format-color-main"
-              disabled={!canFormatText}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => applyHighlightColor(highlightColor)}
-              aria-label="应用高亮颜色"
-            >
-              <span className="highlight-pen-icon" />
-            </button>
-            <button
-              type="button"
-              className="text-format-color-menu"
-              disabled={!canFormatText}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={openHighlightColorPicker}
-              aria-label="选择高亮颜色"
-            >
-              <span className="text-format-color-caret">⌄</span>
-            </button>
-            <input
-              ref={highlightColorInputRef}
-              className="text-format-color-input"
-              type="color"
-              value={highlightColor}
-              disabled={!canFormatText}
-              onChange={(event) => applyHighlightColor(event.currentTarget.value)}
-              aria-label="高亮颜色选择器"
-              tabIndex={-1}
-            />
+          <div className="highlight-presets">
+            {highlightPresets.map((color, slotIndex) => (
+              <React.Fragment key={slotIndex}>
+                <button
+                  type="button"
+                  className={`highlight-preset-dot ${highlightColor === color ? "active" : ""}`}
+                  disabled={!canFormatText}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => applyHighlightColor(color)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    highlightPresetInputRefs.current[slotIndex]?.click();
+                  }}
+                  aria-label={`高亮 ${color}`}
+                  style={{ background: color }}
+                />
+                <input
+                  ref={(el) => { highlightPresetInputRefs.current[slotIndex] = el; }}
+                  type="color"
+                  value={color}
+                  onChange={(event) => {
+                    const next = [...highlightPresets];
+                    next[slotIndex] = event.currentTarget.value;
+                    setHighlightPresets(next);
+                    window.localStorage.setItem(HIGHLIGHT_PRESETS_STORAGE_KEY, JSON.stringify(next));
+                    applyHighlightColor(event.currentTarget.value);
+                  }}
+                  style={{ display: "none" }}
+                  data-preserve-editor-focus="true"
+                />
+              </React.Fragment>
+            ))}
           </div>
           <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
             <div className="block-style-quick-bar">
