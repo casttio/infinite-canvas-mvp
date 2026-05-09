@@ -1812,6 +1812,22 @@ button:disabled {
   margin: 0 2px;
 }
 
+.highlight-preset-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.highlight-preset-wrap input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  padding: 0;
+}
+
 .highlight-preset-dot {
   width: 18px;
   height: 18px;

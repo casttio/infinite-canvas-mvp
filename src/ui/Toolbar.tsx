@@ -864,7 +864,7 @@ export const Toolbar = ({
           </div>
           <div className="highlight-presets">
             {highlightPresets.map((color, slotIndex) => (
-              <Fragment key={slotIndex}>
+              <label key={slotIndex} className="highlight-preset-wrap" title={`高亮 ${color}`}>
                 <button
                   type="button"
                   className={`highlight-preset-dot ${highlightColor === color ? "active" : ""}`}
@@ -873,7 +873,7 @@ export const Toolbar = ({
                   onClick={() => applyHighlightColor(color)}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    highlightPresetInputRefs.current[slotIndex]?.click();
+                    highlightPresetInputRefs.current[slotIndex]?.showPicker();
                   }}
                   aria-label={`高亮 ${color}`}
                   style={{ background: color }}
@@ -882,6 +882,7 @@ export const Toolbar = ({
                   ref={(el) => { highlightPresetInputRefs.current[slotIndex] = el; }}
                   type="color"
                   value={color}
+                  tabIndex={-1}
                   onChange={(event) => {
                     const next = [...highlightPresets];
                     next[slotIndex] = event.currentTarget.value;
@@ -889,10 +890,9 @@ export const Toolbar = ({
                     window.localStorage.setItem(HIGHLIGHT_PRESETS_STORAGE_KEY, JSON.stringify(next));
                     applyHighlightColor(event.currentTarget.value);
                   }}
-                  style={{ display: "none" }}
                   data-preserve-editor-focus="true"
                 />
-              </Fragment>
+              </label>
             ))}
           </div>
           <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
