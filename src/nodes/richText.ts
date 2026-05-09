@@ -641,6 +641,25 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
       }
       // If this is the text-block wrapper div, look inside for the actual block tag
       if (node instanceof HTMLDivElement && node.classList.contains("text-block-paragraph")) {
+        const children = node.children;
+        // If the wrapper has multiple direct child elements, parse each as its own block
+        // (happens when browser paste nests multiple blocks into one wrapper)
+        if (children.length > 1) {
+          for (let ci = 0; ci < children.length; ci++) {
+            const child = children[ci];
+            if (child instanceof HTMLElement) {
+              const childTag = child.tagName.toLowerCase();
+              if (childTag === "p" || childTag === "div") {
+                blocks.push(...parseBlocksFromNodes(Array.from(child.childNodes)));
+              } else if (childTag === "br") {
+                // skip standalone <br> between blocks
+              } else {
+                blocks.push(paragraphFromNodes(Array.from(child.childNodes), childTag));
+              }
+            }
+          }
+          return;
+        }
         const inner = node.firstElementChild;
         // Handle the case where text is directly in wrapper div (no <p> wrapping),
         // which can happen when browser paste bypasses preventDefault or after errors.

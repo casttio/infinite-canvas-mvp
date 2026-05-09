@@ -3712,6 +3712,12 @@ export const App = () => {
       return;
     }
 
+    // Native wheel listener with { passive: false } so preventDefault works for zoom/pan
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+    };
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
     const syncCanvasViewportSize = () => {
       setCanvasViewportSize({
         width: canvas.clientWidth,
@@ -3722,12 +3728,18 @@ export const App = () => {
     syncCanvasViewportSize();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", syncCanvasViewportSize);
-      return () => window.removeEventListener("resize", syncCanvasViewportSize);
+      return () => {
+        canvas.removeEventListener("wheel", handleWheel);
+        window.removeEventListener("resize", syncCanvasViewportSize);
+      };
     }
 
     const observer = new ResizeObserver(syncCanvasViewportSize);
     observer.observe(canvas);
-    return () => observer.disconnect();
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+      observer.disconnect();
+    };
   }, []);
 
   const startNodeDrag = (
@@ -5151,12 +5163,13 @@ export const App = () => {
               transform: `translate(${documentFile.pageBounds.x}px, ${documentFile.pageBounds.y}px)`,
               width: documentFile.pageBounds.w,
               height: documentFile.pageBounds.h,
+              backgroundColor: documentFile.appearance.pageBackground,
               "--page-grid-color": documentFile.appearance.grid.color,
               "--page-grid-size": `${documentFile.appearance.grid.size}px`,
             } as CSSProperties}
           >
             {Array.from({ length: documentFile.appearance.pages.count }, (_, i) => {
-              const top = i * (documentFile.appearance.pages.height + documentFile.appearance.pages.gap);
+              const top = i * documentFile.appearance.pages.height;
               return (
                 <div key={i}
                   className={[
