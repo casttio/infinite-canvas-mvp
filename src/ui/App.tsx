@@ -1625,6 +1625,7 @@ export const App = () => {
   };
 
   const handleSetFontSize = (fontSize: string) => {
+    console.log("[cell-sel] App handleSetFontSize:", fontSize, "editingNodeId:", editingNodeId);
     if (editingNodeId) {
       setEditorCommand({
         type: "set-font-size",
@@ -1661,6 +1662,7 @@ export const App = () => {
       italic?: boolean;
     },
   ) => {
+    console.log("[cell-sel] App handleApplyBlockStyle:", blockStyle, "editingNodeId:", editingNodeId);
     if (!editingNodeId) {
       return;
     }

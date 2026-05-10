@@ -216,6 +216,10 @@ export const TextNode = ({
   const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
   const [textContextMenu, setTextContextMenu] = useState<TextContextMenuState | null>(null);
   const updateEditorSelection = (nextSelection: EditorSelectionState) => {
+    const prev = editorSelectionRef.current;
+    if (prev.type !== nextSelection.type || (nextSelection.type === "cell-range" && prev.type === "cell-range" && (prev.startRow !== nextSelection.startRow || prev.endRow !== nextSelection.endRow || prev.startColumn !== nextSelection.startColumn || prev.endColumn !== nextSelection.endColumn))) {
+      console.log("[cell-sel] updateEditorSelection:", prev.type, "→", nextSelection.type, nextSelection.type === "cell-range" ? `| tableKey:${nextSelection.tableKey} rows:${nextSelection.startRow}-${nextSelection.endRow} cols:${nextSelection.startColumn}-${nextSelection.endColumn}` : "");
+    }
     editorSelectionRef.current = nextSelection;
     setEditorSelection(nextSelection);
   };
@@ -762,6 +766,7 @@ export const TextNode = ({
     const wrapper = editorRef.current?.querySelector(`[data-table-key="${selection.tableKey}"]`);
     const table = wrapper instanceof HTMLElement ? getTableElement(wrapper) : null;
     if (!table) {
+      console.log("[cell-sel] getSelectedTableCells: cell-range path, table NOT found, falling back to highlighted, count:", highlightedCells.length);
       if (highlightedCells.length > 0) {
         return highlightedCells;
       }
@@ -781,6 +786,7 @@ export const TextNode = ({
         }
       }
     }
+    console.log("[cell-sel] getSelectedTableCells: cell-range path, tableKey:", selection.tableKey, "rows:", selection.startRow, "-", selection.endRow, "cols:", selection.startColumn, "-", selection.endColumn, "table rows count:", table.rows.length, "cells found:", cells.length);
     if (cells.length > 0) {
       return cells;
     }
@@ -856,6 +862,9 @@ export const TextNode = ({
       tableLocations.set(`${location.row}:${location.column}`, true);
       locationsByTable.set(location.topBlockIndex, tableLocations);
     });
+    const tableCount = doc.content.filter(b => b.type === "table").length;
+    const appliedInfo = Array.from(locationsByTable.entries()).map(([blockIdx, cells]) => `${blockIdx}:[${Array.from(cells.keys()).join(",")}]`);
+    console.log("[cell-sel] mapSelectedTableCellsInDoc: total tables in doc:", tableCount, "patched locations:", appliedInfo.join(" | "));
     return {
       ...doc,
       content: doc.content.map((block, blockIndex) => {
@@ -928,10 +937,13 @@ export const TextNode = ({
   };
   const applyFormatCommandToSelectedTableCellModel = (nextCommand: TextEditorCommand) => {
     const locations = getSelectedTableCellLocations();
+    console.log("[cell-sel] applyFormatCommandToSelectedTableCellModel: locations:", locations.length, JSON.stringify(locations.map(l => `${l.row}:${l.column}`)));
     if (locations.length === 0) {
       return false;
     }
     const currentDoc = getCurrentRichTextDoc();
+    const currentTableCount = currentDoc.content.filter(b => b.type === "table").length;
+    const currentRowCols = currentDoc.content.filter((b): b is RichTextTable => b.type === "table").map(t => `tables${t.rows.length}r${t.rows[0]?.cells.length}c`);
     const selectedTextLeaves = locations.flatMap((location) => {
       const block = currentDoc.content[location.topBlockIndex];
       if (block?.type !== "table") {
@@ -948,6 +960,8 @@ export const TextNode = ({
     };
     const nextDoc = mapSelectedTableCellsInDoc(currentDoc, locations, (blocks) =>
       mapTextInBlocks(blocks, (inline) => applyTextCommandToLeaf(inline, nextCommand, options)));
+    const nextTableCount = nextDoc.content.filter(b => b.type === "table").length;
+    console.log("[cell-sel] applyFormatCommandToSelectedTableCellModel: tables before:", currentTableCount, currentRowCols.join("|"), "tables after:", nextTableCount, "doc content length before:", currentDoc.content.length, "after:", nextDoc.content.length);
     draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
     if (editorRef.current) {
       editorRef.current.innerHTML = draftHtmlRef.current;
@@ -1488,6 +1502,7 @@ export const TextNode = ({
     }
   };
   const clearTableCellSelection = () => {
+    console.log("[cell-sel] clearTableCellSelection called, current type:", editorSelectionRef.current?.type);
     updateEditorSelection({ type: "none" });
   };
   const getBlockLocation = (element: Element | null) => {
@@ -1702,6 +1717,7 @@ export const TextNode = ({
     startTopBlockIndex: number,
     startCell?: HTMLTableCellElement | null,
   ) => {
+    console.log("[cell-sel] startPendingSelection: startCell:", !!startCell, "blockIndex:", startBlockIndex, "topBlockIndex:", startTopBlockIndex);
     suppressBlurCommitRef.current = true;
     const startCellLocation = startCell ? getCellLocation(startCell) : null;
     pendingSelectionRef.current = {
@@ -3339,8 +3355,10 @@ export const TextNode = ({
     }
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
-      preserveToolbarBlurRef.current = target instanceof Element && !!target.closest("[data-preserve-editor-focus='true']");
-      if (preserveToolbarBlurRef.current) {
+      const isToolbar = target instanceof Element && !!target.closest("[data-preserve-editor-focus='true']");
+      preserveToolbarBlurRef.current = isToolbar;
+      if (isToolbar) {
+        console.log("[cell-sel] toolbar pointerdown detected, saving selection range. editorSelection type:", editorSelectionRef.current?.type);
         saveCurrentSelectionRange();
       }
     };
@@ -3472,6 +3490,7 @@ export const TextNode = ({
     if (editorSelection.type === "none") {
       return;
     }
+    console.log("[cell-sel] CSS effect: applying selection type:", editorSelection.type, editorSelection.type === "cell-range" ? `tableKey:${editorSelection.tableKey} rows:${editorSelection.startRow}-${editorSelection.endRow} cols:${editorSelection.startColumn}-${editorSelection.endColumn}` : "");
     if (editorSelection.type === "cell-range") {
       const wrapper = editor.querySelector(`[data-table-key="${editorSelection.tableKey}"]`);
       if (!(wrapper instanceof HTMLElement)) {
@@ -3641,6 +3660,7 @@ export const TextNode = ({
       || command.type === "toggle-underline"
       || command.type === "toggle-strike"
     ) {
+      console.log("[cell-sel] command effect received:", command.type, "editing:", editing, "editorSelection.type:", editorSelectionRef.current?.type);
       applyInlineFormatCommand(command);
     }
   }, [command, editing]);
