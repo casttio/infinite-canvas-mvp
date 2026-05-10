@@ -66,6 +66,10 @@ input,
   font: inherit;
 }
 
+[contenteditable="true"] {
+  line-height: 1.6;
+}
+
 button {
   border: 1px solid var(--border-base);
   border-radius: 8px;

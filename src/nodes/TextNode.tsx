@@ -645,11 +645,39 @@ export const TextNode = ({
       selection.addRange(nextRange);
       savedSelectionRangeRef.current = nextRange.cloneRange();
     }
+    normalizeFontSizeToBlocks(editor, styledElements);
     draftHtmlRef.current = editor.innerHTML;
     syncDimensionsToContent();
     onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
     editor.focus();
     return true;
+  };
+  const normalizeFontSizeToBlocks = (editor: HTMLElement, styledElements: HTMLElement[]) => {
+    const blocks = new Set<HTMLElement>();
+    styledElements.forEach((el) => {
+      let block = el.closest("p,h1,h2,h3,h4,h5,h6,blockquote,pre,li");
+      while (block && block.parentElement && block.parentElement !== editor && block.parentElement.closest("p,h1,h2,h3,h4,h5,h6,blockquote,pre,li")) {
+        block = block.parentElement.closest("p,h1,h2,h3,h4,h5,h6,blockquote,pre,li");
+      }
+      if (block instanceof HTMLElement && editor.contains(block)) {
+        blocks.add(block);
+      }
+    });
+    blocks.forEach((block) => {
+      const children = Array.from(block.childNodes).filter(
+        (n): n is Text | HTMLElement => n instanceof Text || n instanceof HTMLElement,
+      );
+      if (children.length === 0) return;
+      const fontSizes = children.map((n) => {
+        if (n instanceof Text) {
+          return n.parentElement ? window.getComputedStyle(n.parentElement).fontSize : null;
+        }
+        return window.getComputedStyle(n).fontSize;
+      }).filter((fs): fs is string => fs !== null);
+      if (fontSizes.length > 0 && fontSizes.every((fs) => fs === fontSizes[0])) {
+        block.style.fontSize = fontSizes[0];
+      }
+    });
   };
   const getInlineStylesForCommand = (nextCommand: TextEditorCommand): Partial<CSSStyleDeclaration> | null => {
     if (nextCommand.type === "set-font-family" && typeof nextCommand.fontFamily === "string") {
