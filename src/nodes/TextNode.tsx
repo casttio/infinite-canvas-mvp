@@ -1556,7 +1556,8 @@ export const TextNode = ({
       return false;
     }
     const hasTextSelectionRange = hasActiveTextSelectionRange();
-    if (!hasTextSelectionRange) {
+    const hasCellSelection = editorSelectionRef.current.type === "cell-range" || editorSelectionRef.current.type === "mixed-range";
+    if (!hasTextSelectionRange || hasCellSelection) {
       if (applyFormatCommandToSelectedTableCellModel(nextCommand)) {
         return true;
       }
