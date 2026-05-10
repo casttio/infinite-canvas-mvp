@@ -943,7 +943,7 @@ export const TextNode = ({
     }
     const currentDoc = getCurrentRichTextDoc();
     const currentTableCount = currentDoc.content.filter(b => b.type === "table").length;
-    const currentRowCols = currentDoc.content.filter((b): b is RichTextTable => b.type === "table").map(t => `tables${t.rows.length}r${t.rows[0]?.cells.length}c`);
+    const tableShapes = currentDoc.content.filter(b => b.type === "table").map(t => `${(t as any).rows.length}r${(t as any).rows[0]?.cells.length}c`);
     const selectedTextLeaves = locations.flatMap((location) => {
       const block = currentDoc.content[location.topBlockIndex];
       if (block?.type !== "table") {
@@ -961,7 +961,7 @@ export const TextNode = ({
     const nextDoc = mapSelectedTableCellsInDoc(currentDoc, locations, (blocks) =>
       mapTextInBlocks(blocks, (inline) => applyTextCommandToLeaf(inline, nextCommand, options)));
     const nextTableCount = nextDoc.content.filter(b => b.type === "table").length;
-    console.log("[cell-sel] applyFormatCommandToSelectedTableCellModel: tables before:", currentTableCount, currentRowCols.join("|"), "tables after:", nextTableCount, "doc content length before:", currentDoc.content.length, "after:", nextDoc.content.length);
+    console.log("[cell-sel] applyFormatCommandToSelectedTableCellModel: tables before:", currentTableCount, tableShapes.join("|"), "tables after:", nextTableCount, "doc content length before:", currentDoc.content.length, "after:", nextDoc.content.length);
     draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
     if (editorRef.current) {
       editorRef.current.innerHTML = draftHtmlRef.current;
