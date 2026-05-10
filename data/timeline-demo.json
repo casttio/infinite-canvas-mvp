@@ -1,0 +1,1442 @@
+{
+  "format": "icanvas",
+  "version": 2,
+  "meta": {
+    "id": "doc_timeline_demo",
+    "createdAt": "2026-05-06T12:00:00.000Z",
+    "updatedAt": "2026-05-06T12:00:00.000Z"
+  },
+  "nodes": [
+    {
+      "id": "source_intro",
+      "type": "text",
+      "pageIndex": 0,
+      "x": 60,
+      "y": 80,
+      "w": 420,
+      "h": 140,
+      "z": 1,
+      "content": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "📌 时间线入门笔记"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一个使用时间线功能的示例文档。右侧的"
+              },
+              {
+                "type": "text",
+                "text": "表格",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "source_table"
+                }
+              },
+              {
+                "type": "text",
+                "text": "以药物研发AI为主题，包含了多个方向和年份的数据。"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "你可以：\n1. 选中表格后点击工具栏「生成时间线」→ 自动生成"
+              },
+              {
+                "type": "text",
+                "text": "时间轴节点",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "intro_timeline_ai"
+                }
+              },
+              {
+                "type": "text",
+                "text": "\n2. 点击卡片任意位置切换紧凑/详细视图\n3. 点击工具栏「时间线范例」插入示例表格"
+              }
+            ]
+          }
+        ]
+      },
+      "style": {
+        "fontSize": 15
+      }
+    },
+    {
+      "id": "source_table",
+      "type": "text",
+      "pageIndex": 0,
+      "x": 60,
+      "y": 260,
+      "w": 960,
+      "h": 500,
+      "z": 1,
+      "content": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "选中这个表格 → 工具栏「生成时间线」",
+                "marks": [
+                  "bold"
+                ]
+              }
+            ]
+          },
+          {
+            "type": "table",
+            "w": 920,
+            "colWidths": [
+              200,
+              100,
+              340,
+              140,
+              140
+            ],
+            "rows": [
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "方向"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "年份"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "标题"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "链接"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "类型"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AI分子表示"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2021"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "GNN分子表示基准"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1186/s13321-020-00479-8"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AI分子表示"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2025"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Token-Mol 分子token化模型"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1038/s41467-025-59628-y"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AlphaFold相关"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2021"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AlphaFold2开源"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://github.com/deepmind/alphafold"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "release"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AlphaFold相关"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AlphaFold3发布"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1038/s41586-024-07487-w"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "release"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "SBDD"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2022"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Graph Transformer docking"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1021/acs.jmedchem.2c00991"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "SBDD"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "DiffDock-like基准"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1038/s41592-024-02272-8"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "benchmark"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "打分函数"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2017"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "OnionNet 深度打分函数"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1021/acs.jcim.9b00628"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "打分函数"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2023"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "深度打分函数综述"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1021/acs.jcim.3c00155"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "ADMET"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2019"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "分子属性预测标准"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1021/acs.jcim.9b00237"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "ADMET"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "多任务ADMET基础模型"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1038/s42256-024-00843-5"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "paper"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "大模型"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2024"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "ChatMol 分子对话模型"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://doi.org/10.1038/s42256-024-00863-1"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "product"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "大模型"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2023"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "LLaMA 2 开源"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://github.com/facebookresearch/llama"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "release"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "cells": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "政策"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2023"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "AI生物医药安全峰会"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "https://www.gov.uk/government/topical-events/ai-safety-summit-2023"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "policy"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "style": {
+        "fontSize": 14
+      }
+    },
+    {
+      "id": "intro_timeline_ai",
+      "type": "timeline",
+      "pageIndex": 0,
+      "x": 1060,
+      "y": 240,
+      "w": 340,
+      "h": 520,
+      "z": 2,
+      "entries": [
+        {
+          "category": "AI分子表示",
+          "date": "2021",
+          "title": "GNN分子表示基准",
+          "summary": "分子图神经网络基准测试",
+          "kind": "paper",
+          "link": "https://doi.org/10.1186/s13321-020-00479-8",
+          "importance": 3
+        },
+        {
+          "category": "AI分子表示",
+          "date": "2025",
+          "title": "Token-Mol 分子token化模型",
+          "summary": "将分子转化为token序列进行表示学习",
+          "kind": "paper",
+          "link": "https://doi.org/10.1038/s41467-025-59628-y",
+          "importance": 4
+        },
+        {
+          "category": "AlphaFold相关",
+          "date": "2021",
+          "title": "AlphaFold2开源",
+          "summary": "DeepMind开源AlphaFold2，蛋白质结构预测革命",
+          "kind": "release",
+          "link": "https://github.com/deepmind/alphafold",
+          "importance": 5
+        },
+        {
+          "category": "AlphaFold相关",
+          "date": "2024",
+          "title": "AlphaFold3发布",
+          "summary": "支持蛋白质-配体复合物结构预测",
+          "kind": "release",
+          "link": "https://doi.org/10.1038/s41586-024-07487-w",
+          "importance": 5
+        },
+        {
+          "category": "SBDD",
+          "date": "2022",
+          "title": "Graph Transformer docking",
+          "summary": "基于图的Transformer做分子对接",
+          "kind": "paper",
+          "link": "https://doi.org/10.1021/acs.jmedchem.2c00991",
+          "importance": 3
+        },
+        {
+          "category": "SBDD",
+          "date": "2024",
+          "title": "DiffDock-like基准",
+          "summary": "加速分子对接方法的基准测试",
+          "kind": "benchmark",
+          "link": "https://doi.org/10.1038/s41592-024-02272-8",
+          "importance": 4
+        },
+        {
+          "category": "打分函数",
+          "date": "2017",
+          "title": "OnionNet 深度打分函数",
+          "summary": "基于深度学习的蛋白质-配体打分函数",
+          "kind": "paper",
+          "link": "https://doi.org/10.1021/acs.jcim.9b00628",
+          "importance": 4
+        },
+        {
+          "category": "打分函数",
+          "date": "2023",
+          "title": "深度打分函数综述",
+          "summary": "综述药物发现中深度学习的打分函数进展",
+          "kind": "paper",
+          "link": "https://doi.org/10.1021/acs.jcim.3c00155",
+          "importance": 3
+        },
+        {
+          "category": "ADMET",
+          "date": "2019",
+          "title": "分子属性预测标准",
+          "summary": "ADMET分子属性预测标准数据集",
+          "kind": "paper",
+          "link": "https://doi.org/10.1021/acs.jcim.9b00237",
+          "importance": 3
+        },
+        {
+          "category": "ADMET",
+          "date": "2024",
+          "title": "多任务ADMET基础模型",
+          "summary": "大规模多任务ADMET预测基础模型",
+          "kind": "paper",
+          "link": "https://doi.org/10.1038/s42256-024-00843-5",
+          "importance": 4
+        },
+        {
+          "category": "大模型",
+          "date": "2023",
+          "title": "LLaMA 2 开源",
+          "summary": "Meta开源LLaMA 2大型语言模型",
+          "kind": "release",
+          "link": "https://github.com/facebookresearch/llama",
+          "importance": 5
+        },
+        {
+          "category": "大模型",
+          "date": "2024",
+          "title": "ChatMol 分子对话模型",
+          "summary": "分子科学领域的对话式AI助手",
+          "kind": "product",
+          "link": "https://doi.org/10.1038/s42256-024-00863-1",
+          "importance": 4
+        },
+        {
+          "category": "政策",
+          "date": "2023",
+          "title": "AI生物医药安全峰会",
+          "summary": "各国签署AI安全协议，关注生物医学AI风险",
+          "kind": "policy",
+          "link": "https://www.gov.uk/government/topical-events/ai-safety-summit-2023",
+          "importance": 4
+        }
+      ],
+      "style": {}
+    },
+    {
+      "id": "node_ref1",
+      "type": "text",
+      "pageIndex": 0,
+      "x": 60,
+      "y": 800,
+      "w": 420,
+      "h": 100,
+      "z": 1,
+      "content": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "💡 提示"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "时间轴节点支持在表格中跨页面引用（添加「页码」和「节点」列即可建立节点引用），点击"
+              },
+              {
+                "type": "text",
+                "text": "条目右侧",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "intro_timeline_ai"
+                }
+              },
+              {
+                "type": "text",
+                "text": "的 👁 图标可跳转到关联节点。"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "在自适应模式下，重要性≥5的"
+              },
+              {
+                "type": "text",
+                "text": "条目",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "intro_timeline_ai"
+                }
+              },
+              {
+                "type": "text",
+                "text": "默认展开详细视图，点击卡片可切换显示。同时，你也可以试试点击左下说明中的"
+              },
+              {
+                "type": "text",
+                "text": "表格",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "source_table"
+                }
+              },
+              {
+                "type": "text",
+                "text": "和"
+              },
+              {
+                "type": "text",
+                "text": "说明文字",
+                "marks": [
+                  "bold"
+                ],
+                "nodeLink": {
+                  "pageIndex": 0,
+                  "nodeId": "source_intro"
+                }
+              },
+              {
+                "type": "text",
+                "text": "看看浮窗效果。"
+              }
+            ]
+          }
+        ]
+      },
+      "style": {
+        "fontSize": 14
+      }
+    }
+  ],
+  "assets": {},
+  "pageBounds": {
+    "x": 0,
+    "y": 0,
+    "w": 1600,
+    "h": 1400
+  },
+  "viewState": {
+    "cameraX": 0,
+    "cameraY": 0,
+    "zoom": 0.85
+  },
+  "appearance": {
+    "pageBackground": "#ffffff",
+    "grid": {
+      "enabled": true,
+      "color": "rgba(15, 23, 42, 0.08)",
+      "size": 24
+    },
+    "pages": {
+      "count": 1,
+      "height": 1200,
+      "gap": 72,
+      "titles": [
+        "时间线功能示例"
+      ]
+    }
+  }
+}

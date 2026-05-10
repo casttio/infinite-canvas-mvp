@@ -1,0 +1,28 @@
+{
+  "assets": {},
+  "format": "icanvas",
+  "meta": {
+    "createdAt": "2026-04-22T00:00:00.000Z",
+    "id": "doc_image_missing_sample",
+    "updatedAt": "2026-04-22T00:00:00.000Z"
+  },
+  "nodes": [
+    {
+      "assetId": "asset_missing",
+      "h": 220,
+      "id": "node_image_sample",
+      "style": {},
+      "type": "image",
+      "w": 320,
+      "x": 180,
+      "y": 120,
+      "z": 1
+    }
+  ],
+  "version": 1,
+  "viewState": {
+    "cameraX": 0,
+    "cameraY": 0,
+    "zoom": 1
+  }
+}
