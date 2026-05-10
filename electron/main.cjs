@@ -27,6 +27,7 @@ let runtimeState = {
   selectedNodeIds: [],
 };
 const runtimePending = new Map();
+const getAppIconPath = () => path.join(__dirname, "../build/icon.png");
 
 const ensureDefaultWorkspaceDir = async () => {
   const workspacePath = path.join(app.getPath("documents"), DEFAULT_WORKSPACE_DIR_NAME);
@@ -547,6 +548,7 @@ const createMainWindow = () => {
     height: 860,
     minWidth: 900,
     minHeight: 640,
+    icon: getAppIconPath(),
     frame: false,
     backgroundColor: "#eef2f6",
     webPreferences: {

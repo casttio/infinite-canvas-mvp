@@ -1,7 +1,7 @@
 {
   "name": "infinite-canvas-mvp",
   "private": true,
-  "version": "0.2.26",
+  "version": "0.2.27",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -46,8 +46,10 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/**/*",
       "package.json"
     ],
+    "icon": "build/icon.png",
     "directories": {
       "output": "release"
     },
@@ -61,7 +63,7 @@
       "target": [
         "portable"
       ],
-      "icon": null
+      "icon": "build/icon.ico"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"
