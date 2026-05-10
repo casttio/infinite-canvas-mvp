@@ -306,8 +306,11 @@ export const TextNode = ({
   };
   const restoreEditorFocus = () => {
     window.requestAnimationFrame(() => {
+      console.log("[cell-sel] restoreEditorFocus: about to focus, editorSelection type:", editorSelectionRef.current?.type);
       editorRef.current?.focus();
       suppressBlurCommitRef.current = false;
+      const sel = window.getSelection();
+      console.log("[cell-sel] restoreEditorFocus: focus done, rangeCount:", sel?.rangeCount, "collapsed:", sel?.getRangeAt(0)?.collapsed);
     });
   };
   const isSelectionInsideEditor = (selection: Selection | null) => {
@@ -350,7 +353,11 @@ export const TextNode = ({
         return true;
       }
     }
-    return isRangeInsideEditor(savedSelectionRangeRef.current) && rangeHasTextNode(savedSelectionRangeRef.current);
+    const savedValid = isRangeInsideEditor(savedSelectionRangeRef.current) && rangeHasTextNode(savedSelectionRangeRef.current);
+    if (savedValid) {
+      console.log("[cell-sel] hasActiveTextSelectionRange: live sel NOT valid, but saved range IS valid — this is the dangerous branch");
+    }
+    return savedValid;
   };
   const saveCurrentSelectionRange = () => {
     const selection = window.getSelection();
@@ -1023,6 +1030,7 @@ export const TextNode = ({
   };
   const applyFormatCommandToSelectedTableCells = (nextCommand: TextEditorCommand) => {
     const cells = getSelectedTableCells();
+    console.log("[cell-sel] applyFormatCommandToSelectedTableCells: cells.length:", cells.length, "editorSelection type:", editorSelectionRef.current?.type);
     if (cells.length === 0) {
       return false;
     }
@@ -1557,6 +1565,7 @@ export const TextNode = ({
     }
     const hasTextSelectionRange = hasActiveTextSelectionRange();
     const hasCellSelection = editorSelectionRef.current.type === "cell-range" || editorSelectionRef.current.type === "mixed-range";
+    console.log("[cell-sel] applyInlineFormatCommand:", nextCommand.type, "| hasTextSelRange:", hasTextSelectionRange, "| hasCellSelection:", hasCellSelection, "| editorSelection type:", editorSelectionRef.current.type, "| cells from getSelectedTableCells:", getSelectedTableCells().length);
     if (!hasTextSelectionRange || hasCellSelection) {
       if (applyFormatCommandToSelectedTableCellModel(nextCommand)) {
         return true;
@@ -1806,6 +1815,7 @@ export const TextNode = ({
       if (!session) {
         return;
       }
+      console.log("[cell-sel] pointerup: session.mode:", session.mode, "editorSelection type after cleanup:", editorSelectionRef.current?.type);
       setSelectionAnchor({
         blockIndex: session.startBlockIndex,
         topBlockIndex: session.startTopBlockIndex,
@@ -1816,7 +1826,9 @@ export const TextNode = ({
       if (session.mode === "none") {
         updateEditorSelection({ type: "none" });
         suppressBlurCommitRef.current = false;
+        console.log("[cell-sel] pointerup: mode=none, cleared selection");
       } else {
+        console.log("[cell-sel] pointerup: mode=", session.mode, "about to restoreEditorFocus");
         restoreEditorFocus();
         window.getSelection()?.removeAllRanges();
       }
@@ -3311,7 +3323,9 @@ export const TextNode = ({
     const handleSelectionChange = () => {
       syncActiveTableCellFromSelection();
       saveCurrentSelectionRange();
+      console.log("[cell-sel] selectionchange — editorSelection.type:", editorSelectionRef.current.type, "pendingSelection:", !!pendingSelectionRef.current, "hasActiveTextRange:", hasActiveTextSelectionRange());
       if (!pendingSelectionRef.current && editorSelectionRef.current.type !== "none" && hasActiveTextSelectionRange()) {
+        console.log("[cell-sel] *** selectionchange TRIGGERED CLEAR of type:", editorSelectionRef.current.type);
         updateEditorSelection({ type: "none" });
       }
       reportSelectionFormat();
