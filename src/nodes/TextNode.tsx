@@ -965,6 +965,8 @@ export const TextNode = ({
     draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
     if (editorRef.current) {
       editorRef.current.innerHTML = draftHtmlRef.current;
+      const tables = editorRef.current.querySelectorAll(".text-block-table-wrap");
+      console.log("[cell-sel] model fn: after innerHTML replacement — tables:", tables.length, "tds:", editorRef.current.querySelectorAll("td").length, "rows:", Array.from(tables).map(t => t.querySelector("table")?.rows.length));
     }
     syncDimensionsToContent();
     onDraftChange(nextDoc, { history: "checkpoint" });
@@ -2304,6 +2306,7 @@ export const TextNode = ({
     if (!editorRef.current) {
       return;
     }
+    console.log("[cell-sel] placeCaretAtEnd called, editorSelection type:", editorSelectionRef.current?.type);
     const selection = window.getSelection();
     if (!selection) {
       return;
@@ -3285,8 +3288,12 @@ export const TextNode = ({
       return;
     }
     appliedContentRevisionRef.current = contentRevision;
+    console.log("[cell-sel] content-revision effect RUNNING — node.content changed. tables in DOM before:", editorRef.current.querySelectorAll(".text-block-table-wrap").length, "tds:", editorRef.current.querySelectorAll("td").length);
+    const prevHtmlLen = draftHtmlRef.current.length;
     draftHtmlRef.current = richTextDocToHtml(node.content, assets);
+    console.log("[cell-sel] content-revision effect: prev html len:", prevHtmlLen, "new html len:", draftHtmlRef.current.length, "equal:", prevHtmlLen === draftHtmlRef.current.length);
     editorRef.current.innerHTML = draftHtmlRef.current;
+    console.log("[cell-sel] content-revision effect: after innerHTML, tds:", editorRef.current.querySelectorAll("td").length);
     syncDimensionsToContent();
     editorRef.current.focus();
     placeCaretAtEnd();
