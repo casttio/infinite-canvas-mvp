@@ -41,3 +41,25 @@ describe("rich text links", () => {
     expect(html).toContain('data-node-link-label="Node 1"');
   });
 });
+
+describe("rich text block styles", () => {
+  it("renders visual heading styles on paragraph blocks", () => {
+    const html = richTextDocToHtml({
+      type: "doc",
+      content: [{
+        type: "paragraph",
+        blockTag: "h3",
+        content: [{
+          type: "text",
+          text: "Title",
+          fontSize: "6px",
+          lineHeight: "1.3",
+        }],
+      }],
+    });
+
+    expect(html).toContain('<p data-font-size="6px" data-line-height="1.3" style="font-size: 6px; line-height: 1.3;">');
+    expect(html).not.toContain("<h3");
+    expect(html).not.toContain("data-block-tag");
+  });
+});

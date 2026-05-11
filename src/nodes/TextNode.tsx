@@ -61,6 +61,7 @@ export interface TextEditorCommand {
     fontFamily?: string;
     bold?: boolean;
     italic?: boolean;
+    lineHeight?: string;
   };
   assetId?: string;
   name?: string;
@@ -147,6 +148,7 @@ const CONTEXT_MENU_VIEWPORT_PADDING = 8;
 const TABLE_MIN_COLUMN_WIDTH = 72;
 const NESTED_TABLE_MIN_COLUMN_WIDTH = 48;
 const EMPTY_PARAGRAPH_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
+const isVisualTitleStyle = (styleId: string) => /^title\d+$/.test(styleId) || styleId === "pageTitle";
 export const TextNode = ({
   node,
   assets,
@@ -576,6 +578,9 @@ export const TextNode = ({
     if (styles.fontSize) {
       element.dataset.fontSize = styles.fontSize;
     }
+    if (styles.lineHeight) {
+      element.dataset.lineHeight = styles.lineHeight;
+    }
     if (styles.color) {
       element.dataset.textColor = styles.color;
     }
@@ -601,7 +606,42 @@ export const TextNode = ({
     range.insertNode(span);
     return span;
   };
-  const applyInlineStylesToSelection = (styles: Partial<CSSStyleDeclaration>) => {
+  const normalizeSelectionBlocksToTag = (tagName: string) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0 || !isSelectionInsideEditor(selection)) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const blocks = new Set<HTMLElement>();
+    const collectBlock = (node: Node | null) => {
+      const element = node instanceof HTMLElement ? node : node?.parentElement;
+      const block = element?.closest("p,h1,h2,h3,h4,h5,h6,blockquote,pre,li");
+      if (block instanceof HTMLElement && editor.contains(block)) {
+        blocks.add(block);
+      }
+    };
+
+    collectBlock(range.startContainer);
+    collectBlock(range.endContainer);
+    Array.from(editor.querySelectorAll("p,h1,h2,h3,h4,h5,h6,blockquote,pre,li"))
+      .forEach((block) => {
+        if (block instanceof HTMLElement && range.intersectsNode(block)) {
+          blocks.add(block);
+        }
+      });
+
+    blocks.forEach((block) => {
+      const nextBlock = replaceFormattingTargetTag(block, tagName);
+      if (tagName === "p") {
+        const wrapper = nextBlock.closest(".text-block-paragraph");
+        if (wrapper instanceof HTMLElement) {
+          wrapper.removeAttribute("data-block-tag");
+        }
+      }
+    });
+  };
+  const applyInlineStylesToSelection = (styles: Partial<CSSStyleDeclaration>, options?: { blockTag?: string }) => {
     const editor = editorRef.current;
     const selection = window.getSelection();
     if (!editor || !selection || selection.rangeCount === 0 || !isSelectionInsideEditor(selection)) {
@@ -657,6 +697,9 @@ export const TextNode = ({
       savedSelectionRangeRef.current = nextRange.cloneRange();
     }
     normalizeFontSizeToBlocks(editor, styledElements);
+    if (options?.blockTag) {
+      normalizeSelectionBlocksToTag(options.blockTag);
+    }
     draftHtmlRef.current = editor.innerHTML;
     syncDimensionsToContent();
     onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
@@ -710,6 +753,7 @@ export const TextNode = ({
         ...(preset.fontSize ? { fontSize: preset.fontSize } : {}),
         ...(preset.fontFamily ? { fontFamily: preset.fontFamily } : {}),
         ...(preset.color ? { color: preset.color } : {}),
+        ...(preset.lineHeight ? { lineHeight: preset.lineHeight } : {}),
       };
       if (typeof preset.bold === "boolean") {
         styles.fontWeight = preset.bold ? "700" : "400";
@@ -726,19 +770,20 @@ export const TextNode = ({
       return null;
     }
     const stylesById: Record<string, BlockStyleCommandPreset> = {
-      title1: { tag: "h1", fontSize: "32px", bold: true, color: "#24211F" },
-      title2: { tag: "h2", fontSize: "28px", bold: true, color: "#24211F" },
-      title3: { tag: "h3", fontSize: "24px", bold: true, color: "#24211F" },
-      title4: { tag: "h4", fontSize: "20px", bold: true, italic: true, color: "#6B6661" },
-      title5: { tag: "h5", fontSize: "18px", bold: true, italic: true, color: "#6B6661" },
-      title6: { tag: "h6", fontSize: "16px", bold: true, italic: true, color: "#6B6661" },
-      pageTitle: { tag: "h1", fontSize: "36px", bold: true, color: "#24211F" },
+      title1: { tag: "p", fontSize: "32px", bold: true, color: "#24211F", lineHeight: "1.2" },
+      title2: { tag: "p", fontSize: "28px", bold: true, color: "#24211F", lineHeight: "1.25" },
+      title3: { tag: "p", fontSize: "24px", bold: true, color: "#24211F", lineHeight: "1.3" },
+      title4: { tag: "p", fontSize: "20px", bold: true, italic: true, color: "#6B6661", lineHeight: "1.35" },
+      title5: { tag: "p", fontSize: "18px", bold: true, italic: true, color: "#6B6661", lineHeight: "1.4" },
+      title6: { tag: "p", fontSize: "16px", bold: true, italic: true, color: "#6B6661", lineHeight: "1.4" },
+      pageTitle: { tag: "p", fontSize: "36px", bold: true, color: "#24211F", lineHeight: "1.2" },
       lead: { tag: "p", fontSize: "18px", color: "#6B6661" },
       quote: { tag: "blockquote", fontSize: "16px", italic: true, color: "#9E9993" },
       code: { tag: "pre", fontSize: "15px", fontFamily: "Consolas, monospace", color: "#D57D61" },
       normal: { tag: "p", fontSize: "16px", color: "#24211F" },
     };
-    return nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle] ?? null;
+    const preset = nextCommand.blockStylePreset ?? stylesById[nextCommand.blockStyle] ?? null;
+    return preset && isVisualTitleStyle(nextCommand.blockStyle) ? { ...preset, tag: "p" } : preset;
   };
   const getSelectedTableCells = () => {
     const selection = editorSelectionRef.current;
@@ -940,6 +985,7 @@ export const TextNode = ({
       ...(blockStyle.fontFamily ? { fontFamily: blockStyle.fontFamily } : {}),
       ...(blockStyle.fontSize ? { fontSize: blockStyle.fontSize } : {}),
       ...(blockStyle.color ? { color: blockStyle.color } : {}),
+      ...(blockStyle.lineHeight ? { lineHeight: blockStyle.lineHeight } : {}),
       marks: setTextMark(
         setTextMark(inline.marks, "bold", blockStyle.bold ?? inline.marks?.includes("bold") ?? false),
         "italic",
@@ -1033,6 +1079,9 @@ export const TextNode = ({
     if (styles.fontSize) {
       target.dataset.fontSize = styles.fontSize;
     }
+    if (styles.lineHeight) {
+      target.dataset.lineHeight = styles.lineHeight;
+    }
     if (styles.color) {
       target.dataset.textColor = styles.color;
     }
@@ -1056,6 +1105,7 @@ export const TextNode = ({
       ...(style.fontSize ? { fontSize: style.fontSize } : {}),
       ...(style.fontFamily ? { fontFamily: style.fontFamily } : {}),
       ...(style.color ? { color: style.color } : {}),
+      ...(style.lineHeight ? { lineHeight: style.lineHeight } : {}),
       ...(typeof style.bold === "boolean" ? { fontWeight: style.bold ? "700" : "400" } : {}),
       ...(typeof style.italic === "boolean" ? { fontStyle: style.italic ? "italic" : "normal" } : {}),
     });
@@ -1078,6 +1128,7 @@ export const TextNode = ({
           ...(blockStyle.fontSize ? { fontSize: blockStyle.fontSize } : {}),
           ...(blockStyle.fontFamily ? { fontFamily: blockStyle.fontFamily } : {}),
           ...(blockStyle.color ? { color: blockStyle.color } : {}),
+          ...(blockStyle.lineHeight ? { lineHeight: blockStyle.lineHeight } : {}),
           ...(typeof blockStyle.bold === "boolean" ? { fontWeight: blockStyle.bold ? "700" : "400" } : {}),
           ...(typeof blockStyle.italic === "boolean" ? { fontStyle: blockStyle.italic ? "italic" : "normal" } : {}),
         }));
@@ -1622,6 +1673,12 @@ export const TextNode = ({
     if (hasCollapsedEditorSelection()) {
       const collapsedStyles = getInlineStylesForCommand(nextCommand);
       if (collapsedStyles && applyInlineStyleAtCaret(collapsedStyles)) {
+        if (nextCommand.type === "apply-block-style") {
+          const blockStyle = getBlockStyleForCommand(nextCommand);
+          if (blockStyle?.tag) {
+            normalizeSelectionBlocksToTag(blockStyle.tag);
+          }
+        }
         draftHtmlRef.current = editorRef.current.innerHTML;
         syncDimensionsToContent();
         onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
@@ -1632,7 +1689,8 @@ export const TextNode = ({
     }
     if (nextCommand.type === "apply-block-style" && typeof nextCommand.blockStyle === "string") {
       const styles = getInlineStylesForCommand(nextCommand);
-      if (styles && applyInlineStylesToSelection(styles)) {
+      const blockStyle = getBlockStyleForCommand(nextCommand);
+      if (styles && applyInlineStylesToSelection(styles, { blockTag: blockStyle?.tag })) {
         return true;
       }
     }

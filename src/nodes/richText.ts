@@ -89,15 +89,30 @@ const normalizeHighlightColor = (value: string | null | undefined) => {
     return undefined;
   }
 
+  // Strip white / effectively-white highlights (no visible highlight)
+  const compact = normalized.replace(/\s+/g, "");
+  if (
+    compact === "white" ||
+    compact === "#ffffff" ||
+    compact === "#fff" ||
+    compact === "rgb(255,255,255)" ||
+    compact === "rgba(255,255,255,1)" ||
+    compact === "rgba(255,255,255,1.0)"
+  ) {
+    return undefined;
+  }
+
   return normalized;
 };
 
 const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type: "text" }>) => {
+  const hlColor = normalizeHighlightColor(inline.highlightColor);
   const styleEntries = [
     inline.fontFamily ? `font-family: ${escapeAttribute(inline.fontFamily)};` : "",
     inline.fontSize ? `font-size: ${escapeAttribute(inline.fontSize)};` : "",
     inline.color ? `color: ${escapeAttribute(inline.color)};` : "",
-    inline.highlightColor ? `background-color: ${escapeAttribute(inline.highlightColor)};` : "",
+    hlColor ? `background-color: ${escapeAttribute(hlColor)};` : "",
+    inline.lineHeight ? `line-height: ${escapeAttribute(inline.lineHeight)};` : "",
   ].filter(Boolean);
 
   if (styleEntries.length === 0) {
@@ -108,7 +123,8 @@ const wrapInlineStyle = (content: string, inline: Extract<RichTextInline, { type
     inline.fontFamily ? `data-font-family="${escapeAttribute(inline.fontFamily)}"` : "",
     inline.fontSize ? `data-font-size="${escapeAttribute(inline.fontSize)}"` : "",
     inline.color ? `data-text-color="${escapeAttribute(inline.color)}"` : "",
-    inline.highlightColor ? `data-highlight-color="${escapeAttribute(inline.highlightColor)}"` : "",
+    hlColor ? `data-highlight-color="${escapeAttribute(hlColor)}"` : "",
+    inline.lineHeight ? `data-line-height="${escapeAttribute(inline.lineHeight)}"` : "",
     `style="${styleEntries.join(" ")}"`,
   ].filter(Boolean).join(" ");
 
@@ -161,10 +177,41 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}, highlightQu
   return wrapInlineStyle(wrapLink(markedText, inline), inline);
 };
 
+const getUniformTextValue = (
+  paragraph: RichTextParagraph,
+  key: keyof Pick<Extract<RichTextInline, { type: "text" }>, "fontSize" | "lineHeight">,
+) => {
+  const textLeaves = paragraph.content.filter((inline): inline is Extract<RichTextInline, { type: "text" }> =>
+    inline.type === "text" && inline.text.length > 0);
+  if (textLeaves.length === 0) {
+    return undefined;
+  }
+
+  const firstValue = textLeaves[0][key];
+  if (!firstValue) {
+    return undefined;
+  }
+
+  return textLeaves.every((inline) => inline[key] === firstValue) ? firstValue : undefined;
+};
+
+const visualBlockTag = (blockTag: string | undefined) =>
+  blockTag && /^h[1-6]$/.test(blockTag) ? "p" : blockTag;
+
 const paragraphToHtml = (paragraph: RichTextParagraph, assets: AssetMap = {}, highlightQuery?: string): string => {
-  const tag = paragraph.blockTag ?? "p";
-  const blockTagAttr = paragraph.blockTag ? ` data-block-tag="${paragraph.blockTag}"` : "";
-  return `<div class="text-block text-block-paragraph" data-block-kind="paragraph"${blockTagAttr}><${tag}>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets, highlightQuery)).join("") || "<br />"}</${tag}></div>`;
+  const renderedBlockTag = visualBlockTag(paragraph.blockTag);
+  const tag = renderedBlockTag ?? "p";
+  const blockTagAttr = renderedBlockTag && renderedBlockTag !== "p" ? ` data-block-tag="${renderedBlockTag}"` : "";
+  const fontSize = getUniformTextValue(paragraph, "fontSize");
+  const lineHeight = getUniformTextValue(paragraph, "lineHeight");
+  const blockStyleEntries = [
+    fontSize ? `font-size: ${escapeAttribute(fontSize)};` : "",
+    lineHeight ? `line-height: ${escapeAttribute(lineHeight)};` : "",
+  ].filter(Boolean);
+  const blockStyleAttr = blockStyleEntries.length > 0 ? ` style="${blockStyleEntries.join(" ")}"` : "";
+  const blockFontSizeAttr = fontSize ? ` data-font-size="${escapeAttribute(fontSize)}"` : "";
+  const blockLineHeightAttr = lineHeight ? ` data-line-height="${escapeAttribute(lineHeight)}"` : "";
+  return `<div class="text-block text-block-paragraph" data-block-kind="paragraph"${blockTagAttr}><${tag}${blockFontSizeAttr}${blockLineHeightAttr}${blockStyleAttr}>${ensureParagraphContent(paragraph.content).map((inline) => inlineToHtml(inline, assets, highlightQuery)).join("") || "<br />"}</${tag}></div>`;
 };
 
 const tableCellToHtml = (
@@ -312,6 +359,7 @@ const readInlineStyle = (element: Node | null) => {
   let current = element;
   let fontFamily: string | undefined;
   let fontSize: string | undefined;
+  let lineHeight: string | undefined;
   let color: string | undefined;
   let highlightColor: string | undefined;
 
@@ -338,6 +386,13 @@ const readInlineStyle = (element: Node | null) => {
       if (!fontSize) {
         fontSize = HEADING_FONT_SIZES[current.tagName.toLowerCase()];
       }
+    }
+
+    if (!lineHeight) {
+      lineHeight = normalizeInlineStyleValue(
+        current.dataset.lineHeight
+        ?? current.style.lineHeight,
+      );
     }
 
     if (!color) {
@@ -372,6 +427,7 @@ const readInlineStyle = (element: Node | null) => {
   return {
     ...(fontFamily ? { fontFamily } : {}),
     ...(fontSize ? { fontSize } : {}),
+    ...(lineHeight ? { lineHeight } : {}),
     ...(color ? { color } : {}),
     ...(highlightColor ? { highlightColor } : {}),
   };

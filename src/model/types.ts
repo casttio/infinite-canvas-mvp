@@ -57,6 +57,7 @@ export interface RichTextTextLeaf extends UnknownFields {
   fontSize?: string;
   color?: string;
   highlightColor?: string;
+  lineHeight?: string;
 }
 
 export interface RichTextBreakLeaf extends UnknownFields {

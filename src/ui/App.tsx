@@ -1679,6 +1679,7 @@ export const App = () => {
       fontFamily?: string;
       bold?: boolean;
       italic?: boolean;
+      lineHeight?: string;
     },
   ) => {
     console.log("[cell-sel] App handleApplyBlockStyle:", blockStyle, "editingNodeId:", editingNodeId);

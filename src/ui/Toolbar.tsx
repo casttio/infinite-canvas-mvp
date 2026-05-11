@@ -47,11 +47,12 @@ type BlockStylePreset = {
   fontFamily: string;
   bold: boolean;
   italic: boolean;
+  lineHeight?: string;
 };
 const DEFAULT_BLOCK_STYLE_PRESETS: BlockStylePreset[] = [
-  { id: "title1", label: "标题 1", className: "title-1", tag: "h1", fontSize: "32", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
-  { id: "title2", label: "标题 2", className: "title-2", tag: "h2", fontSize: "24", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
-  { id: "title3", label: "标题 3", className: "title-3", tag: "h3", fontSize: "18", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false },
+  { id: "title1", label: "标题 1", className: "title-1", tag: "p", fontSize: "32", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.2" },
+  { id: "title2", label: "标题 2", className: "title-2", tag: "p", fontSize: "24", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.25" },
+  { id: "title3", label: "标题 3", className: "title-3", tag: "p", fontSize: "18", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.3" },
   { id: "quote", label: "引用", className: "quote", tag: "blockquote", fontSize: "15", color: "#6B6661", fontFamily: FONT_SERIF, bold: false, italic: true },
   { id: "normal", label: "常规", className: "normal", tag: "p", fontSize: "15", color: "#24211F", fontFamily: FONT_SANS, bold: false, italic: false },
   { id: "lead", label: "引文", className: "lead", tag: "p", fontSize: "16", color: "#6B6661", fontFamily: FONT_SANS, bold: false, italic: false },
@@ -69,10 +70,14 @@ const readBlockStylePresets = () => {
       return DEFAULT_BLOCK_STYLE_PRESETS;
     }
 
-    return DEFAULT_BLOCK_STYLE_PRESETS.map((fallback) => ({
-      ...fallback,
-      ...(parsed.find((item) => item?.id === fallback.id) ?? {}),
-    }));
+    return DEFAULT_BLOCK_STYLE_PRESETS.map((fallback) => {
+      const stored = parsed.find((item) => item?.id === fallback.id) ?? {};
+      return {
+        ...fallback,
+        ...stored,
+        ...(fallback.id.startsWith("title") ? { tag: "p" } : {}),
+      };
+    });
   } catch {
     return DEFAULT_BLOCK_STYLE_PRESETS;
   }
@@ -407,8 +412,11 @@ export const Toolbar = ({
   };
 
   const updateBlockStylePreset = (id: string, patch: Partial<BlockStylePreset>) => {
+    const normalizedPatch = id.startsWith("title") && patch.tag
+      ? { ...patch, tag: "p" }
+      : patch;
     persistBlockStylePresets(blockStylePresets.map((preset) =>
-      preset.id === id ? { ...preset, ...patch } : preset));
+      preset.id === id ? { ...preset, ...normalizedPatch } : preset));
   };
 
   const resetBlockStylePresets = () => {
@@ -435,12 +443,13 @@ export const Toolbar = ({
   };
 
   const getBlockStyleCommandPreset = (preset: BlockStylePreset) => ({
-    tag: preset.tag,
+    tag: preset.id.startsWith("title") ? "p" : preset.tag,
     fontSize: `${preset.fontSize}px`,
     color: preset.color,
     fontFamily: preset.fontFamily,
     bold: preset.bold,
     italic: preset.italic,
+    lineHeight: preset.lineHeight,
   });
 
   const getBlockStylePreviewStyle = (preset: BlockStylePreset): CSSProperties => ({
@@ -977,23 +986,6 @@ export const Toolbar = ({
                         />
                       </label>
                     </div>
-                    <label>
-                      <span>块类型</span>
-                      <select
-                        value={editingBlockStyle.tag}
-                        onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { tag: event.currentTarget.value })}
-                      >
-                        <option value="p">段落</option>
-                        <option value="h1">H1</option>
-                        <option value="h2">H2</option>
-                        <option value="h3">H3</option>
-                        <option value="h4">H4</option>
-                        <option value="h5">H5</option>
-                        <option value="h6">H6</option>
-                        <option value="blockquote">引用</option>
-                        <option value="pre">代码</option>
-                      </select>
-                    </label>
                     <div className="block-style-editor-toggles">
                       <label><input type="checkbox" checked={editingBlockStyle.bold} onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { bold: event.currentTarget.checked })} />加粗</label>
                       <label><input type="checkbox" checked={editingBlockStyle.italic} onChange={(event) => updateBlockStylePreset(editingBlockStyle.id, { italic: event.currentTarget.checked })} />斜体</label>

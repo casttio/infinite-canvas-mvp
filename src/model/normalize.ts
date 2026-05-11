@@ -59,6 +59,10 @@ const normalizeInline = (inline: RichTextInline): RichTextInline => {
       ? Array.from(new Set([...marks, "link" as const]))
       : marks.filter((mark) => mark !== "link");
 
+    const lineHeight = typeof inline.lineHeight === "string" && inline.lineHeight.trim().length > 0
+      ? inline.lineHeight.trim()
+      : undefined;
+
     return {
       ...inline,
       marks: nextMarks,
@@ -68,6 +72,7 @@ const normalizeInline = (inline: RichTextInline): RichTextInline => {
       ...(fontSize ? { fontSize } : {}),
       ...(color ? { color } : {}),
       ...(highlightColor ? { highlightColor } : {}),
+      ...(lineHeight ? { lineHeight } : {}),
     };
   }
 
