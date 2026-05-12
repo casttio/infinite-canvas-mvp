@@ -48,6 +48,9 @@ import { searchInNodes, type SearchResult } from "../model/search";
 import { ReferencePopover, type ReferenceLink, type ReferenceNodeRef } from "../ui/ReferencePopover";
 import type { SearchScope } from "../ui/Toolbar";
 
+const isPdfAttachment = (mimeType?: string, fileName?: string) =>
+  mimeType?.toLowerCase() === "application/pdf" || fileName?.toLowerCase().endsWith(".pdf") === true;
+
 type InteractionState =
   | { type: "none" }
   | { type: "pan"; startX: number; startY: number; initialX: number; initialY: number }
@@ -396,19 +399,42 @@ const plainTextFromRichTextDoc = (doc: RichTextDoc) =>
     return "";
   }).join("\n").trim();
 
-const formatUpdatedAt = (value: string) => {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
+const richTextBlockHasContent = (block: RichTextBlock): boolean => {
+  if (block.type === "table") {
+    return true;
   }
 
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(parsed);
+  return block.content.some((inline) => {
+    if (inline.type === "image") {
+      return true;
+    }
+    if (inline.type === "text") {
+      return inline.text.trim().length > 0 || Boolean(inline.href || inline.nodeLink);
+    }
+    return false;
+  });
+};
+
+const richTextDocHasContent = (doc: RichTextDoc) => doc.content.some(richTextBlockHasContent);
+
+const formatPageDateTime = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return { date: value, time: "" };
+  }
+
+  return {
+    date: new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }).format(parsed),
+    time: new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(parsed),
+  };
 };
 
 const getWorkspaceRelativePath = (filePath: string, rootPath: string | null) => {
@@ -818,7 +844,7 @@ export const App = () => {
   const visibleTimelineNodes = visiblePageNodes.filter((n): n is TimelineNodeType => n.type === "timeline");
   const visiblePageConnectors = visiblePageNodes.filter((node): node is ConnectorNode => node.type === "connector");
   const currentPageTitle = documentFile.appearance.pages.titles?.[activePageIndex] ?? "";
-  const currentUpdatedAt = formatUpdatedAt(documentFile.meta.updatedAt);
+  const currentPageDateTime = formatPageDateTime(documentFile.meta.createdAt);
   const currentFileName = currentSavePath?.split(/[\\/]/).pop() ?? fileHandleRef.current?.name ?? fileNameFromMeta(documentFile);
   const currentDisplayFileName = getDisplayFileName(currentFileName);
   const pageSummaries = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
@@ -1504,13 +1530,13 @@ export const App = () => {
         }
 
         const assetId = createAssetId();
-        const isPdf = imported.mimeType === "application/pdf" || imported.name.toLowerCase().endsWith(".pdf");
-        const width = isPdf ? 720 : 360;
-        const height = isPdf ? 920 : 160;
+        const isPdf = isPdfAttachment(imported.mimeType, imported.name);
+        const width = 360;
+        const height = 160;
         const node = {
           ...createImageNode(0, 0, assetId, width, height),
           style: {
-            kind: isPdf ? "pdf-preview" : "attachment-preview",
+            kind: "attachment-preview",
           },
         };
 
@@ -1550,6 +1576,53 @@ export const App = () => {
 
     attachmentInputRef.current?.click();
   };
+
+  const handleOpenAttachment = async (assetId: string) => {
+    const asset = documentFile.assets[assetId];
+    if (!asset) return;
+
+    // Managed attachment: resolve file path and open with system default app
+    if (asset.storage === "managed" && asset.relativePath && currentSavePath) {
+      if (window.electronApp?.resolveAttachmentUrl) {
+        try {
+          const url = await window.electronApp.resolveAttachmentUrl({
+            documentPath: currentSavePath,
+            relativePath: asset.relativePath,
+          });
+          if (url && window.electronApp?.openExternal) {
+            window.electronApp.openExternal(url);
+            return;
+          }
+        } catch { /* fall through */ }
+      }
+      // Fallback: use cached fileUrl
+      const cachedUrl = managedAssetUrls[assetId];
+      if (cachedUrl && window.electronApp?.openExternal) {
+        window.electronApp.openExternal(cachedUrl);
+        return;
+      }
+    }
+
+    // Embedded attachment: trigger download via Blob
+    if (asset.storage === "embedded" && asset.data) {
+      try {
+        const response = await fetch(asset.data);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = asset.name || "attachment";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {
+        // Fallback: open data URL directly (works for PDFs, images, text)
+        window.open(asset.data, "_blank");
+      }
+    }
+  };
+
   const handleInsertTimelineExample = () => {
     if (editingNodeId) {
       setEditorCommand({
@@ -1786,6 +1859,7 @@ export const App = () => {
     const node = {
       ...createTextNode(x, y),
       pageIndex: activePageIndex,
+      content: createDefaultRichTextDoc(""),
     };
 
     patchDocument((current) => addNodeToDocument(current, node));
@@ -2861,7 +2935,10 @@ export const App = () => {
       return;
     }
 
-    const node = createTextNode(0, 0);
+    const node = {
+      ...createTextNode(0, 0),
+      content: createDefaultRichTextDoc(""),
+    };
     patchDocument((current) => {
       const insertionPoint = getPageInsertionPoint(current, activePageIndex);
       const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
@@ -3086,13 +3163,13 @@ export const App = () => {
     try {
       const assetId = createAssetId();
       const data = await readFileAsDataUrl(file);
-      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      const width = isPdf ? 720 : 360;
-      const height = isPdf ? 920 : 160;
+      const isPdf = isPdfAttachment(file.type, file.name);
+      const width = 360;
+      const height = 160;
       const node = {
         ...createImageNode(0, 0, assetId, width, height),
         style: {
-          kind: isPdf ? "pdf-preview" : "attachment-preview",
+          kind: "attachment-preview",
         },
       };
 
@@ -3378,42 +3455,50 @@ export const App = () => {
         return;
       }
 
+      // Check for meaningful text content first.
+      // OneNote and similar apps put both HTML and an image snapshot into the
+      // clipboard; the user almost always intends to paste the rich text, not
+      // the rendered image.
       const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+      const pastedHtml = event.clipboardData?.getData("text/html") ?? "";
+
+      if (pastedText.trim().length > 0 || pastedHtml.length > 0) {
+        event.preventDefault();
+        runQuickEditCommand({
+          type: "append-text",
+          placement: "end",
+          text: pastedText,
+          nonce: editorCommandNonceRef.current++,
+        });
+        return;
+      }
+
+      // No text content – check for standalone image file in clipboard items.
       const imageFile = Array.from(event.clipboardData?.items ?? [])
         .find((item) => item.kind === "file" && item.type.startsWith("image/"))
         ?.getAsFile();
 
-      if (!imageFile && pastedText.length === 0) {
+      if (!imageFile) {
         return;
       }
 
       event.preventDefault();
 
-      if (imageFile) {
-        try {
-          const inserted = await handlePasteImageIntoText(imageFile);
-          runQuickEditCommand({
-            type: "insert-image",
-            placement: "end",
-            nonce: editorCommandNonceRef.current++,
-            assetId: inserted.assetId,
-            name: inserted.name,
-            data: inserted.data,
-            w: inserted.w,
-            h: inserted.h,
-          });
-        } catch (error) {
-          setErrorMessage(error instanceof Error ? error.message : "图片读取失败。");
-        }
-        return;
+      try {
+        const inserted = await handlePasteImageIntoText(imageFile);
+        runQuickEditCommand({
+          type: "insert-image",
+          placement: "end",
+          nonce: editorCommandNonceRef.current++,
+          assetId: inserted.assetId,
+          name: inserted.name,
+          data: inserted.data,
+          w: inserted.w,
+          h: inserted.h,
+        });
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "图片读取失败。");
       }
-
-      runQuickEditCommand({
-        type: "append-text",
-        placement: "end",
-        text: pastedText,
-        nonce: editorCommandNonceRef.current++,
-      });
     };
 
     document.addEventListener("keydown", handleKeyDown, true);
@@ -3643,6 +3728,9 @@ export const App = () => {
             .map((node) => node.id);
 
           setSelectedNodeIds(selectedIds);
+          suppressNextCanvasClickRef.current = true;
+        } else {
+          handleAddTextAt(interaction.startX, interaction.startY);
           suppressNextCanvasClickRef.current = true;
         }
       }
@@ -3930,7 +4018,7 @@ export const App = () => {
     height: canvasViewportSize.height || canvasRef.current?.clientHeight || 0,
   };
   const cameraBounds = getCameraBounds(documentFile.viewState, documentFile.pageBounds, viewportForScrollbars);
-  const scrollbarInset = 12;
+  const scrollbarInset = 0;
   const scrollbarThickness = 12;
   const horizontalTrackSize = Math.max(0, viewportForScrollbars.width - scrollbarInset * 2 - scrollbarThickness);
   const verticalTrackSize = Math.max(0, viewportForScrollbars.height - scrollbarInset * 2 - scrollbarThickness);
@@ -5158,22 +5246,6 @@ export const App = () => {
         }}
         >
           <div
-            className="canvas-floating-title"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="canvas-floating-title-main">
-              <input
-                className="canvas-header-title-input"
-                type="text"
-                value={currentPageTitle}
-                onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
-                placeholder={pageSummaries[activePageIndex] ?? "页面标题"}
-              />
-            </div>
-            <div className="canvas-floating-title-meta">最近修改 {currentUpdatedAt}</div>
-          </div>
-          <div
             className={`canvas-grid ${zoomTransitionActive ? "zoom-transition" : ""}`}
             style={{
               "--canvas-zoom": documentFile.viewState.zoom,
@@ -5209,6 +5281,25 @@ export const App = () => {
                 />
               );
             })}
+            <div
+              className="onenote-page-title"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="onenote-page-title-outline">
+                <input
+                  className="onenote-page-title-input"
+                  type="text"
+                  value={currentPageTitle}
+                  onChange={(event) => handlePageTitleChange(activePageIndex, event.currentTarget.value)}
+                  placeholder="页面标题"
+                />
+              </div>
+              <div className="onenote-page-title-datetime" aria-label="页面创建时间">
+                <div>{currentPageDateTime.date}</div>
+                {currentPageDateTime.time ? <div>{currentPageDateTime.time}</div> : null}
+              </div>
+            </div>
           </div>
           <ConnectorLayer
             connectors={visiblePageConnectors}
@@ -5265,6 +5356,14 @@ export const App = () => {
                     onCommit={(content) => {
                       textDraftHistoryRef.current = null;
                       setEditingNodeId(null);
+                      if (!richTextDocHasContent(content)) {
+                        patchDocument((current) => settleDocumentLayout({
+                          ...current,
+                          nodes: current.nodes.filter((currentNode) => currentNode.id !== node.id),
+                        }));
+                        setSelectedNodeIds((current) => current.filter((nodeId) => nodeId !== node.id));
+                        return;
+                      }
                       updateNode(node.id, (current) => ({ ...current, content }));
                     }}
                     onDraftChange={(content, options) => {
@@ -5367,6 +5466,7 @@ export const App = () => {
                   onSelect={() => selectNode(node.id)}
                   onPointerDown={(event) => startNodeDrag(event, node)}
                   onResizePointerDown={(event, handle) => startResize(event, node, handle)}
+                  onOpenAttachment={handleOpenAttachment}
                 />
               );
             })}

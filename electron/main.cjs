@@ -944,6 +944,21 @@ app.whenReady().then(() => {
     return filePath + "\n" + homePath;
   });
 
+  ipcMain.handle("shell:open-path", async (_event, options = {}) => {
+    const filePath = typeof options.filePath === "string" && options.filePath.length > 0
+      ? options.filePath
+      : "";
+    if (!filePath) {
+      return { success: false, error: "文件路径无效。" };
+    }
+    try {
+      const error = await shell.openPath(filePath);
+      return error ? { success: false, error } : { success: true };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
   ipcMain.handle("attachment:resolve-url", async (_event, options = {}) => {
     const documentPath = typeof options.documentPath === "string" && options.documentPath.length > 0
       ? options.documentPath

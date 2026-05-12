@@ -11,6 +11,7 @@ interface ImageNodeProps {
   onSelect: () => void;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
+  onOpenAttachment?: (assetId: string) => void;
 }
 
 const attachmentBadge = (asset?: Asset) => {
@@ -33,7 +34,18 @@ export const ImageNode = ({
   onSelect,
   onPointerDown,
   onResizePointerDown,
-}: ImageNodeProps) => (
+  onOpenAttachment,
+}: ImageNodeProps) => {
+  const isAttachment = asset && (asset.type === "file" || asset.type === "pdf" || asset.storage === "managed");
+
+  const handleOpenAttachment = (event: React.MouseEvent) => {
+    if (isAttachment && onOpenAttachment) {
+      event.stopPropagation();
+      onOpenAttachment(node.assetId);
+    }
+  };
+
+  return (
   <div
     className={`canvas-node image-node ${selected ? "selected" : ""}`}
     data-node-id={node.id}
@@ -51,20 +63,6 @@ export const ImageNode = ({
   >
     {asset?.type === "image" && asset.data ? (
       <img src={asset.data} alt={asset.name} draggable={false} />
-    ) : asset?.type === "pdf" && asset.data ? (
-      <div className="html-preview-frame" aria-label={asset.name}>
-        <div className="html-preview-toolbar">
-          <span className="html-preview-dot" />
-          <span className="html-preview-dot" />
-          <span className="html-preview-dot" />
-          <span className="html-preview-title">{asset.name}</span>
-        </div>
-        <iframe
-          className="html-preview-iframe"
-          src={asset.data}
-          title={asset.name}
-        />
-      </div>
     ) : asset?.type === "html" && asset.data ? (
       <div className="html-preview-frame" aria-label={asset.name}>
         <div className="html-preview-toolbar">
@@ -80,16 +78,14 @@ export const ImageNode = ({
           title={asset.name}
         />
       </div>
-    ) : asset?.type === "file" ? (
-      <div className="attachment-card" aria-label={asset.name}>
+    ) : isAttachment ? (
+      <div className="attachment-card" aria-label={asset.name} onClick={handleOpenAttachment}>
         <div className="attachment-card-icon">{attachmentBadge(asset)}</div>
         <div className="attachment-card-meta">
           <strong className="attachment-card-name">{asset.name}</strong>
           <span className="attachment-card-type">{asset.mimeType || "附件"}</span>
         </div>
       </div>
-    ) : asset?.storage === "managed" ? (
-      <div className="image-placeholder">附件缺失或当前路径不可访问</div>
     ) : (
       <div className="image-placeholder">图片资源缺失或已损坏</div>
     )}
@@ -116,4 +112,5 @@ export const ImageNode = ({
       </>
     ) : null}
   </div>
-);
+  );
+};

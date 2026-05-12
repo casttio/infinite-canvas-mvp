@@ -36,7 +36,7 @@ type ConnectorStyleControls = {
 };
 const BLOCK_STYLE_STORAGE_KEY = "icanvas.block-style-presets";
 const BLOCK_STYLE_SLOTS_KEY = "icanvas.block-style-slots";
-const DEFAULT_BLOCK_STYLE_SLOTS = ["title1", "title2", "title3"];
+const DEFAULT_BLOCK_STYLE_SLOTS = ["title1", "title2", "title3", "title4"];
 type BlockStylePreset = {
   id: string;
   label: string;
@@ -53,6 +53,7 @@ const DEFAULT_BLOCK_STYLE_PRESETS: BlockStylePreset[] = [
   { id: "title1", label: "标题 1", className: "title-1", tag: "p", fontSize: "32", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.2" },
   { id: "title2", label: "标题 2", className: "title-2", tag: "p", fontSize: "24", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.25" },
   { id: "title3", label: "标题 3", className: "title-3", tag: "p", fontSize: "18", color: "#24211F", fontFamily: FONT_SERIF, bold: true, italic: false, lineHeight: "1.3" },
+  { id: "title4", label: "标题 4", className: "title-4", tag: "p", fontSize: "14", color: "#24211F", fontFamily: FONT_SANS, bold: true, italic: false, lineHeight: "1.35" },
   { id: "quote", label: "引用", className: "quote", tag: "blockquote", fontSize: "15", color: "#6B6661", fontFamily: FONT_SERIF, bold: false, italic: true },
   { id: "normal", label: "常规", className: "normal", tag: "p", fontSize: "15", color: "#24211F", fontFamily: FONT_SANS, bold: false, italic: false },
   { id: "lead", label: "引文", className: "lead", tag: "p", fontSize: "16", color: "#6B6661", fontFamily: FONT_SANS, bold: false, italic: false },
@@ -87,7 +88,7 @@ const readBlockStyleSlots = (): string[] => {
   if (typeof window === "undefined") return DEFAULT_BLOCK_STYLE_SLOTS;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(BLOCK_STYLE_SLOTS_KEY) ?? "null");
-    if (Array.isArray(parsed) && parsed.length === 3) return parsed;
+    if (Array.isArray(parsed) && parsed.length === 4) return parsed;
   } catch { /* ignore */ }
   return DEFAULT_BLOCK_STYLE_SLOTS;
 };
@@ -454,7 +455,7 @@ export const Toolbar = ({
 
   const getBlockStylePreviewStyle = (preset: BlockStylePreset): CSSProperties => ({
     color: preset.color,
-    fontSize: `${preset.fontSize}px`,
+    fontSize: "13px",
     fontFamily: preset.fontFamily,
     fontWeight: preset.bold ? 700 : 400,
     fontStyle: preset.italic ? "italic" : "normal",
@@ -753,10 +754,13 @@ export const Toolbar = ({
     }
 
     return (
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-ribbon-home">
+        <div className="ribbon-control-group ribbon-history-group">
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canUndo} onClick={onUndo} aria-label="撤销">↶</button>
         <button type="button" className="toolbar-button toolbar-icon-button" disabled={!canRedo} onClick={onRedo} aria-label="重做">↷</button>
+        </div>
         <div className="text-format-toolbar" data-preserve-editor-focus="true">
+          <div className="ribbon-control-group ribbon-font-group">
           <select
             className="text-format-select font-select"
             value={displayFontFamily}
@@ -839,6 +843,8 @@ export const Toolbar = ({
           >
             ab
           </button>
+          </div>
+          <div className="ribbon-control-group ribbon-color-group">
           <div className="text-format-color-split" style={{ "--format-color": textColor } as CSSProperties}>
             <button
               type="button"
@@ -904,9 +910,11 @@ export const Toolbar = ({
               </label>
             ))}
           </div>
+          </div>
+          <div className="ribbon-control-group ribbon-styles-group">
           <div className="toolbar-popover-anchor" ref={blockStyleMenuRef}>
             <div className="block-style-quick-bar">
-              {[0, 1, 2].map((slotIndex) => {
+              {[0, 1, 2, 3].map((slotIndex) => {
                 const preset = blockStylePresets.find((p) => p.id === blockStyleSlots[slotIndex]) ?? blockStylePresets[0];
                 return (
                   <button
@@ -1043,6 +1051,7 @@ export const Toolbar = ({
                 )}
               </div>
             ) : null}
+          </div>
           </div>
         </div>
       </div>

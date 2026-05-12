@@ -158,10 +158,14 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}, highlightQu
 
   if (inline.type === "image") {
     const asset = assets[inline.assetId];
+    const styleEntries = [
+      inline.w ? `width: ${inline.w}px;` : "",
+      inline.h ? `height: ${inline.h}px;` : "",
+    ].filter(Boolean);
     const sizeAttributes = [
       inline.w ? `data-w="${inline.w}"` : "",
       inline.h ? `data-h="${inline.h}"` : "",
-      inline.w ? `style="width: ${inline.w}px;"` : "",
+      styleEntries.length > 0 ? `style="${styleEntries.join(" ")}"` : "",
     ].filter(Boolean).join(" ");
 
     if (!asset || asset.type !== "image" || !asset.data) {

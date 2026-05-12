@@ -140,15 +140,40 @@ type TextContextMenuState = {
   y: number;
   measured: boolean;
 };
-const COLUMN_RESIZE_HIT_SLOP = 14;
-const TABLE_RESIZE_HIT_SLOP = 18;
+const COLUMN_RESIZE_HIT_SLOP = 6;
+const TABLE_RESIZE_HIT_SLOP = 8;
 const NODE_RESIZE_HIT_SLOP = 22;
 const TABLE_SELECTION_DRAG_THRESHOLD = 6;
 const CONTEXT_MENU_VIEWPORT_PADDING = 8;
-const TABLE_MIN_COLUMN_WIDTH = 72;
+const TABLE_MIN_COLUMN_WIDTH = 56;
 const NESTED_TABLE_MIN_COLUMN_WIDTH = 48;
 const EMPTY_PARAGRAPH_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
 const isVisualTitleStyle = (styleId: string) => /^title\d+$/.test(styleId) || styleId === "pageTitle";
+const makeTableKey = (topBlockIndex: number, tablePath: number[] = []) =>
+  `table-${topBlockIndex}${tablePath.length > 0 ? `-${tablePath.join("-")}` : ""}`;
+const dataUrlMimeType = (dataUrl: string) => /^data:([^;,]+)/i.exec(dataUrl)?.[1] ?? "image/png";
+const imageExtensionFromMime = (mimeType: string) => {
+  const subtype = mimeType.split("/")[1]?.toLowerCase().replace(/^svg\+xml$/, "svg");
+  return subtype && /^[a-z0-9]+$/.test(subtype) ? subtype : "png";
+};
+const cssLengthToPixels = (value: string | null | undefined) => {
+  const match = /^\s*([0-9]*\.?[0-9]+)\s*(px|pt|in)?\s*$/i.exec(value ?? "");
+  if (!match) {
+    return undefined;
+  }
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return undefined;
+  }
+  const unit = match[2]?.toLowerCase() ?? "px";
+  if (unit === "in") {
+    return amount * 96;
+  }
+  if (unit === "pt") {
+    return amount * (96 / 72);
+  }
+  return amount;
+};
 export const TextNode = ({
   node,
   assets,
@@ -848,7 +873,7 @@ export const TextNode = ({
       if (!location) {
         return;
       }
-      uniqueLocations.set(`${location.topBlockIndex}:${location.row}:${location.column}`, location);
+      uniqueLocations.set(`${location.tableKey}:${location.row}:${location.column}`, location);
     });
     return Array.from(uniqueLocations.values());
   };
@@ -901,42 +926,65 @@ export const TextNode = ({
     locations: Array<NonNullable<ReturnType<typeof getCellLocation>>>,
     mapCellBlocks: (blocks: RichTextBlock[]) => RichTextBlock[],
   ): { doc: RichTextDoc; modified: boolean } => {
-    // Use tableKey in the location key to distinguish outer/inner table cells:
-    // without it, inner-table coordinate "0:1" would accidentally match the outer
-    // table's cell at (row 0, column 1), applying format to the entire nested table.
-    const locationsByTable = new Map<number, Map<string, true>>();
+    const locationsByTable = new Map<string, Set<string>>();
     locations.forEach((location) => {
-      const tableLocations = locationsByTable.get(location.topBlockIndex) ?? new Map<string, true>();
-      tableLocations.set(`${location.tableKey}:${location.row}:${location.column}`, true);
-      locationsByTable.set(location.topBlockIndex, tableLocations);
+      const tableLocations = locationsByTable.get(location.tableKey) ?? new Set<string>();
+      tableLocations.add(`${location.row}:${location.column}`);
+      locationsByTable.set(location.tableKey, tableLocations);
     });
-    const tableCount = doc.content.filter(b => b.type === "table").length;
-    const appliedInfo = Array.from(locationsByTable.entries()).map(([blockIdx, cells]) => `${blockIdx}:[${Array.from(cells.keys()).join(",")}]`);
-    console.log("[cell-sel] mapSelectedTableCellsInDoc: total tables in doc:", tableCount, "patched locations:", appliedInfo.join(" | "));
     let modified = false;
+
+    const mapTable = (
+      table: Extract<RichTextBlock, { type: "table" }>,
+      topBlockIndex: number,
+      tablePath: number[],
+    ): Extract<RichTextBlock, { type: "table" }> => {
+      const tableKey = makeTableKey(topBlockIndex, tablePath);
+      const selectedCells = locationsByTable.get(tableKey);
+      let tableModified = false;
+      const nextRows = table.rows.map((row, rowIndex) => {
+        let rowModified = false;
+        const nextCells = row.cells.map((cell, columnIndex) => {
+          let nextContent = cell.content.map((childBlock, childBlockIndex) => {
+            if (childBlock.type !== "table") {
+              return childBlock;
+            }
+            const nextChildTable = mapTable(childBlock, topBlockIndex, [
+              ...tablePath,
+              rowIndex,
+              columnIndex,
+              childBlockIndex,
+            ]);
+            if (nextChildTable !== childBlock) {
+              rowModified = true;
+            }
+            return nextChildTable;
+          });
+          if (selectedCells?.has(`${rowIndex}:${columnIndex}`)) {
+            nextContent = mapCellBlocks(nextContent);
+            rowModified = true;
+          }
+          return rowModified ? { ...cell, content: nextContent } : cell;
+        });
+        if (rowModified) {
+          tableModified = true;
+          return { ...row, cells: nextCells };
+        }
+        return row;
+      });
+
+      if (!tableModified) {
+        return table;
+      }
+      modified = true;
+      return { ...table, rows: nextRows };
+    };
+
     const nextContent = doc.content.map((block, blockIndex) => {
-      const tableLocations = locationsByTable.get(blockIndex);
-      if (!tableLocations || block.type !== "table") {
+      if (block.type !== "table") {
         return block;
       }
-      // Use the same tableKey pattern as the DOM assigns
-      // (see the useEffect that sets `table-${index}` on each [data-block-kind])
-      const myTableKey = `table-${blockIndex}`;
-      let rowModified = false;
-      const nextRows = block.rows.map((row, rowIndex) => {
-        let cellModified = false;
-        const nextCells = row.cells.map((cell, columnIndex) => {
-          if (tableLocations.has(`${myTableKey}:${rowIndex}:${columnIndex}`)) {
-            cellModified = true;
-            return { ...cell, content: mapCellBlocks(cell.content) };
-          }
-          return cell;
-        });
-        if (cellModified) rowModified = true;
-        return { ...row, cells: nextCells };
-      });
-      if (rowModified) modified = true;
-      return { ...block, rows: nextRows };
+      return mapTable(block, blockIndex, []);
     });
     return {
       doc: { ...doc, content: nextContent },
@@ -1288,6 +1336,8 @@ export const TextNode = ({
     }
     return getMeasuredTableColumnWidths(wrapper, table);
   };
+  const hasExplicitTableColumnWidths = (wrapper: HTMLElement, table: HTMLTableElement) =>
+    readTableColumnWidths(wrapper, table).length > 0;
   const expandAncestorColumnsForNestedTable = (wrapper: HTMLElement, childWidth = getElementPixelWidth(wrapper)) => {
     let currentWrapper: HTMLElement | null = wrapper;
     let requiredNestedWidth = childWidth;
@@ -1300,6 +1350,13 @@ export const TextNode = ({
       const parentTable = getTableElement(parentWrapper);
       if (!parentTable) {
         break;
+      }
+      if (!hasExplicitTableColumnWidths(parentWrapper, parentTable)) {
+        containingCell.style.minWidth = `${Math.ceil(requiredNestedWidth + getHorizontalPadding(containingCell))}px`;
+        currentWrapper = parentWrapper;
+        requiredNestedWidth = Math.max(getElementPixelWidth(parentWrapper), requiredNestedWidth);
+        containingCell = currentWrapper.closest("td");
+        continue;
       }
       const columnIndex = containingCell.cellIndex;
       const currentWidths = getTableColumnWidths(parentWrapper);
@@ -1381,6 +1438,12 @@ export const TextNode = ({
       if (!table || table.rows.length === 0) {
         return;
       }
+      if (!hasExplicitTableColumnWidths(wrapper, table)) {
+        if (isNestedTableWrapper(wrapper)) {
+          expandAncestorColumnsForNestedTable(wrapper);
+        }
+        return;
+      }
       const widths = getTableColumnWidths(wrapper);
       if (widths.length > 0) {
         applyTableColumnWidths(wrapper, widths);
@@ -1403,6 +1466,7 @@ export const TextNode = ({
       const nextWidth = Math.max(80, startWidth + (moveEvent.clientX - startX) / screenScale);
       const nextHeight = Math.max(40, nextWidth * aspectRatio);
       frame.style.width = `${nextWidth}px`;
+      frame.style.height = `${nextHeight}px`;
       frame.setAttribute("data-w", String(Math.round(nextWidth)));
       frame.setAttribute("data-h", String(Math.round(nextHeight)));
       syncDimensionsToContent();
@@ -2298,6 +2362,28 @@ export const TextNode = ({
     root.innerHTML = html;
     return !!root.querySelector("table, [data-block-kind]");
   };
+  const createEmptyParagraphBlock = () => {
+    const template = document.createElement("template");
+    template.innerHTML = EMPTY_PARAGRAPH_HTML;
+    return template.content.firstElementChild;
+  };
+  const ensureTrailingParagraphAfterTable = (element: Element | null) => {
+    if (!(element instanceof HTMLElement) || element.dataset.blockKind !== "table") {
+      return;
+    }
+    const parent = element.parentElement;
+    if (!parent?.classList.contains("text-block-table-cell-content")) {
+      return;
+    }
+    const next = element.nextElementSibling;
+    if (next instanceof HTMLElement && next.dataset.blockKind === "paragraph") {
+      return;
+    }
+    const paragraph = createEmptyParagraphBlock();
+    if (paragraph) {
+      element.after(paragraph);
+    }
+  };
   const insertStructuredHtmlAtSelection = (html: string) => {
     if (!editorRef.current) {
       return;
@@ -2332,6 +2418,7 @@ export const TextNode = ({
       } else {
         cellContent.appendChild(fragment);
       }
+      ensureTrailingParagraphAfterTable(lastElement);
     } else {
       const currentBlock = anchorElement?.closest("[data-block-kind]");
       if (currentBlock instanceof HTMLElement && editorRef.current.contains(currentBlock)) {
@@ -2493,6 +2580,50 @@ export const TextNode = ({
     const hasStructuredContent = root.querySelector("table, [data-block-kind], p, div, ul, ol, li, blockquote, h1, h2, h3, h4, h5, h6, .text-inline-image-frame");
     return hasStructuredContent ? root.innerHTML : "";
   };
+  const materializePastedHtmlImages = async (html: string) => {
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    const images = Array.from(root.querySelectorAll("img"));
+    if (images.length === 0) {
+      return html;
+    }
+
+    for (const imageElement of images) {
+      const src = imageElement.getAttribute("src") ?? "";
+      if (!src.startsWith("data:image/")) {
+        continue;
+      }
+
+      const mimeType = dataUrlMimeType(src);
+      const extension = imageExtensionFromMime(mimeType);
+      const response = await fetch(src);
+      const blob = await response.blob();
+      const file = new File([blob], `pasted-image.${extension}`, { type: blob.type || mimeType });
+      const pasted = await onPasteImage(file);
+      const displayWidth = Math.round(
+        cssLengthToPixels(imageElement.getAttribute("width"))
+        ?? cssLengthToPixels(imageElement.style.width)
+        ?? pasted.w,
+      );
+      const displayHeight = Math.round(
+        cssLengthToPixels(imageElement.getAttribute("height"))
+        ?? cssLengthToPixels(imageElement.style.height)
+        ?? pasted.h,
+      );
+      const frame = document.createElement("span");
+      frame.className = "text-inline-image-frame";
+      frame.contentEditable = "false";
+      frame.dataset.assetId = pasted.assetId;
+      frame.dataset.w = String(displayWidth);
+      frame.dataset.h = String(displayHeight);
+      frame.style.width = `${displayWidth}px`;
+      frame.style.height = `${displayHeight}px`;
+      frame.innerHTML = `<img src="${escapeAttribute(pasted.data)}" alt="${escapeAttribute(pasted.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span>`;
+      imageElement.replaceWith(frame);
+    }
+
+    return root.innerHTML;
+  };
   const insertTableAtCaret = (placement: "caret" | "end" = "caret") => {
     if (placement === "end") {
       placeCaretAtEnd();
@@ -2539,7 +2670,7 @@ export const TextNode = ({
     placement: "caret" | "end" = "caret",
   ) => {
     insertHtmlAndCommit(
-      `<span class="text-inline-image-frame" contenteditable="false" data-asset-id="${escapeAttribute(image.assetId)}" data-w="${image.w}" data-h="${image.h}" style="width: ${image.w}px;"><img src="${escapeAttribute(image.data)}" alt="${escapeAttribute(image.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span></span>`,
+      `<span class="text-inline-image-frame" contenteditable="false" data-asset-id="${escapeAttribute(image.assetId)}" data-w="${image.w}" data-h="${image.h}" style="width: ${image.w}px; height: ${image.h}px;"><img src="${escapeAttribute(image.data)}" alt="${escapeAttribute(image.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span></span>`,
       placement,
     );
   };
@@ -3197,6 +3328,58 @@ export const TextNode = ({
       clearTableCellSelection();
       placeCaretAtEnd();
     }
+    // Check for meaningful rich-text / HTML content first.
+    // OneNote and similar apps put both HTML and an image snapshot into the
+    // clipboard; the user almost always intends to paste the rich text, not the
+    // rendered image.
+    const rawHtml = event.clipboardData.getData("text/html") || customClipboardRef.current?.html || "";
+    const rawPlainText = event.clipboardData.getData("text/plain") || customClipboardRef.current?.text || "";
+    const hasHtml = rawHtml.length > 0;
+    const hasPlainText = rawPlainText.trim().length > 0;
+
+    if (hasHtml || hasPlainText) {
+      // Rich text or plain text is available – prefer it over any embedded image.
+      event.preventDefault();
+      const html = hasHtml ? await materializePastedHtmlImages(normalizePastedHtml(rawHtml)) : "";
+      if (html) {
+        if (tryAppendPastedTableHtml(html)) {
+          return;
+        }
+        const htmlHasTable = isStructuredHtml(html);
+        if (!htmlHasTable && hasPlainText) {
+          const plainTableHtml = tsvToTableHtml(rawPlainText);
+          if (plainTableHtml) {
+            insertHtmlAndCommit(plainTableHtml);
+            return;
+          }
+        }
+        insertHtmlAndCommit(html);
+        return;
+      }
+      // No usable HTML – fall through to plain-text handling.
+      if (hasPlainText) {
+        const tableHtml = tsvToTableHtml(rawPlainText);
+        if (tryAppendPastedPlainTextTable(rawPlainText)) {
+          return;
+        }
+        if (tableHtml) {
+          insertHtmlAndCommit(tableHtml);
+          return;
+        }
+        insertTextAtCaret(rawPlainText);
+        syncActiveTableCellFromSelection();
+        if (!editorRef.current) {
+          return;
+        }
+        draftHtmlRef.current = editorRef.current.innerHTML;
+        syncDimensionsToContent();
+        onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
+        return;
+      }
+      return;
+    }
+
+    // No text content – check for standalone image file in clipboard items.
     const imageFile = Array.from(event.clipboardData.items)
       .find((item) => item.kind === "file" && item.type.startsWith("image/"))
       ?.getAsFile();
@@ -3204,54 +3387,7 @@ export const TextNode = ({
       event.preventDefault();
       const pasted = await onPasteImage(imageFile);
       insertImageAtCaret(pasted);
-      return;
     }
-    const html = normalizePastedHtml(event.clipboardData.getData("text/html") || customClipboardRef.current?.html || "");
-    if (html) {
-      if (tryAppendPastedTableHtml(html)) {
-        event.preventDefault();
-        return;
-      }
-      // If HTML already contains table structure, skip plain-text table conversion
-      // to avoid flattening nested tables (plain text from nested tables contains
-      // newlines within cells that tsvToTableHtml incorrectly treats as row separators).
-      const htmlHasTable = isStructuredHtml(html);
-      if (!htmlHasTable) {
-        const plainText = event.clipboardData.getData("text/plain") || customClipboardRef.current?.text || "";
-        if (plainText) {
-          const plainTableHtml = tsvToTableHtml(plainText);
-          if (plainTableHtml) {
-            event.preventDefault();
-            insertHtmlAndCommit(plainTableHtml);
-            return;
-          }
-        }
-      }
-      event.preventDefault();
-      insertHtmlAndCommit(html);
-      return;
-    }
-    const plainText = event.clipboardData.getData("text/plain") || customClipboardRef.current?.text || "";
-    if (!plainText) {
-      return;
-    }
-    const tableHtml = tsvToTableHtml(plainText);
-    event.preventDefault();
-    if (tryAppendPastedPlainTextTable(plainText)) {
-      return;
-    }
-    if (tableHtml) {
-      insertHtmlAndCommit(tableHtml);
-      return;
-    }
-    insertTextAtCaret(plainText);
-    syncActiveTableCellFromSelection();
-    if (!editorRef.current) {
-      return;
-    }
-    draftHtmlRef.current = editorRef.current.innerHTML;
-    syncDimensionsToContent();
-    onDraftChange(htmlToRichTextDoc(draftHtmlRef.current), { history: "checkpoint" });
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!editing) {
@@ -3554,15 +3690,43 @@ export const TextNode = ({
     if (!editor) {
       return;
     }
-    Array.from(editor.querySelectorAll("[data-block-kind]")).forEach((element, index) => {
-      if (element instanceof HTMLElement) {
-        element.dataset.blockIndex = String(index);
-        element.dataset.tableKey = `table-${index}`;
+    let blockIndex = 0;
+    const assignBlockMetadata = (element: HTMLElement) => {
+      element.dataset.blockIndex = String(blockIndex);
+      blockIndex += 1;
+    };
+    const assignTableMetadata = (wrapper: HTMLElement, topBlockIndex: number, tablePath: number[]) => {
+      wrapper.dataset.tableKey = makeTableKey(topBlockIndex, tablePath);
+      const table = getTableElement(wrapper);
+      if (!table) {
+        return;
       }
-    });
+      Array.from(table.rows).forEach((row, rowIndex) => {
+        Array.from(row.cells).forEach((cell, columnIndex) => {
+          const cellContent = cell.querySelector(":scope > .text-block-table-cell-content");
+          const childBlocks = Array.from((cellContent ?? cell).children)
+            .filter((child): child is HTMLElement => child instanceof HTMLElement && !!child.dataset.blockKind);
+          childBlocks.forEach((childBlock, childBlockIndex) => {
+            assignBlockMetadata(childBlock);
+            if (childBlock.dataset.blockKind === "table") {
+              assignTableMetadata(childBlock, topBlockIndex, [
+                ...tablePath,
+                rowIndex,
+                columnIndex,
+                childBlockIndex,
+              ]);
+            }
+          });
+        });
+      });
+    };
     Array.from(editor.children).forEach((element, index) => {
       if (element instanceof HTMLElement && element.dataset.blockKind) {
         element.dataset.topBlockIndex = String(index);
+        assignBlockMetadata(element);
+        if (element.dataset.blockKind === "table") {
+          assignTableMetadata(element, index, []);
+        }
       }
     });
   }, [editing, node.content, assets]);
