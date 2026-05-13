@@ -930,7 +930,7 @@ app.whenReady().then(() => {
       mimeType: getMimeTypeFromPath(targetPath),
       relativePath: path.relative(path.dirname(documentPath), targetPath),
       sizeBytes: stats.size,
-      fileUrl: pathToFileURL(targetPath).href,
+      filePath: targetPath,
     };
   });
 
@@ -974,7 +974,7 @@ app.whenReady().then(() => {
     const targetPath = path.resolve(path.dirname(documentPath), relativePath);
     try {
       await fs.access(targetPath);
-      return pathToFileURL(targetPath).href;
+      return targetPath;
     } catch (error) {
       if (error && typeof error === "object" && error.code === "ENOENT") {
         return null;

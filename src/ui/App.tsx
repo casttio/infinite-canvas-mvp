@@ -40,7 +40,8 @@ import type { TextEditorCommand } from "../nodes/TextNode";
 import { generateTimelineHtml, getTimelineSize } from "../timeline/generateTimeline";
 import { parseTableToTimelineRows } from "../timeline/parseTable";
 import { parseMarkdownToRichTextDoc } from "../markdown/parseMarkdown";
-import { FileSidebar, WorkspaceGraphPanel, getDisplayFileName } from "./FileSidebar";
+import { FileSidebar, getDisplayFileName } from "./FileSidebar";
+import { resolveManagedAttachmentOpenPath } from "./attachmentPaths";
 import { Toolbar } from "./Toolbar";
 
 const APP_VERSION = packageInfo.version;
@@ -137,8 +138,6 @@ type MarkdownDialogState = null | {
   text: string;
 };
 
-type LeftSidebarMode = "files" | "graph";
-
 const fileNameFromMeta = (document: DocumentFile) => `${document.meta.id}.icanvas.html`;
 const CAMERA_OVERSCROLL_LEFT_TOP = 240;
 const CAMERA_OVERSCROLL_RIGHT_BOTTOM = 180;
@@ -149,11 +148,7 @@ const AUTOSAVE_DELAY_MS = 800;
 const PAGE_STATE_STORAGE_KEY = "icanvas.page-state";
 const FILE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.file-sidebar.collapsed";
 const PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY = "icanvas.page-sidebar.collapsed";
-const GRAPH_SIDEBAR_WIDTH_STORAGE_KEY = "icanvas.graph-sidebar.width";
 const FILE_TREE_ORDER_STORAGE_KEY = "icanvas.file-tree.order";
-const GRAPH_SIDEBAR_DEFAULT_WIDTH = 360;
-const GRAPH_SIDEBAR_MIN_WIDTH = 280;
-const GRAPH_SIDEBAR_MAX_WIDTH = 760;
 
 const getInsertOffset = (count: number) => {
   const step = 28;
@@ -593,17 +588,6 @@ const readStoredPageSidebarCollapsed = () => {
   return window.localStorage.getItem(PAGE_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
 };
 
-const readStoredGraphSidebarWidth = () => {
-  if (typeof window === "undefined") {
-    return GRAPH_SIDEBAR_DEFAULT_WIDTH;
-  }
-
-  const storedWidth = Number(window.localStorage.getItem(GRAPH_SIDEBAR_WIDTH_STORAGE_KEY));
-  return Number.isFinite(storedWidth)
-    ? clamp(storedWidth, GRAPH_SIDEBAR_MIN_WIDTH, GRAPH_SIDEBAR_MAX_WIDTH)
-    : GRAPH_SIDEBAR_DEFAULT_WIDTH;
-};
-
 const readFileAsDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -638,6 +622,45 @@ const plainTextToRichTextDoc = (text: string): RichTextDoc => {
   return {
     type: "doc",
     content,
+  };
+};
+
+const looksLikeHtmlSource = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("<") || !trimmed.endsWith(">")) {
+    return false;
+  }
+
+  return /<(html|head|body|div|section|article|main|header|footer|aside|nav|table|p|h[1-6]|ul|ol|li|span|img|style|script)\b/i.test(trimmed);
+};
+
+const createHtmlPreviewAsset = (rawHtml: string) => {
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(rawHtml, "text/html");
+  const title = parsed.title.trim();
+  const headInnerHtml = parsed.head.innerHTML;
+  const bodyInnerHtml = parsed.body.innerHTML;
+
+  return {
+    title,
+    html: `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    ${headInnerHtml}
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: white;
+      }
+    </style>
+  </head>
+  <body>
+    ${bodyInnerHtml}
+  </body>
+</html>`,
   };
 };
 
@@ -770,9 +793,7 @@ export const App = () => {
   const [fileTreeOrder, setFileTreeOrder] = useState(readStoredFileTreeOrder);
   const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(readStoredFileSidebarCollapsed);
   const [pageSidebarCollapsed, setPageSidebarCollapsed] = useState(readStoredPageSidebarCollapsed);
-  const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>("files");
-  const [graphSidebarWidth, setGraphSidebarWidth] = useState(readStoredGraphSidebarWidth);
-  const [graphSidebarResizing, setGraphSidebarResizing] = useState(false);
+  const [openingWorkspaceFilePath, setOpeningWorkspaceFilePath] = useState<string | null>(null);
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<SidebarContextMenuState>(null);
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState>(null);
@@ -862,29 +883,6 @@ export const App = () => {
 
     return firstLine ?? `空白页 ${index + 1}`;
   }), [documentFile.appearance.pages.titles, documentFile.nodes, pageCount]);
-  const currentWorkspaceDocumentSummary = useMemo<WorkspaceDocumentSummary | null>(() => {
-    if (!currentSavePath) {
-      return null;
-    }
-
-    return {
-      filePath: currentSavePath,
-      fileName: currentSavePath.split(/[\\/]/).pop() ?? fileNameFromMeta(documentFile),
-      relativePath: getWorkspaceRelativePath(currentSavePath, workspaceRootPath),
-      pageCount,
-      pages: pageSummaries.map((title, index) => ({ index, title })),
-      updatedAt: documentFile.meta.updatedAt,
-    };
-  }, [currentSavePath, documentFile.meta.updatedAt, pageCount, pageSummaries, workspaceRootPath]);
-  const sidebarDocumentSummaries = useMemo(() => {
-    if (!currentWorkspaceDocumentSummary) {
-      return workspaceDocumentSummaries;
-    }
-
-    const withoutCurrent = workspaceDocumentSummaries.filter((item) => item.filePath !== currentWorkspaceDocumentSummary.filePath);
-    return [...withoutCurrent, currentWorkspaceDocumentSummary]
-      .sort((left, right) => left.relativePath.localeCompare(right.relativePath, "zh-CN"));
-  }, [currentWorkspaceDocumentSummary, workspaceDocumentSummaries]);
   const orderedWorkspaceEntries = useMemo(
     () => orderWorkspaceEntries(workspaceEntries, fileTreeOrder, workspaceRootPath),
     [fileTreeOrder, workspaceEntries, workspaceRootPath],
@@ -954,14 +952,6 @@ export const App = () => {
       return;
     }
 
-    window.localStorage.setItem(GRAPH_SIDEBAR_WIDTH_STORAGE_KEY, String(graphSidebarWidth));
-  }, [graphSidebarWidth]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
     window.localStorage.setItem(FILE_TREE_ORDER_STORAGE_KEY, JSON.stringify(fileTreeOrder));
   }, [fileTreeOrder]);
 
@@ -973,28 +963,6 @@ export const App = () => {
 
   const updateDirtyFromDocument = (nextDocument: DocumentFile) => {
     setIsDirty(serializeDocument(nextDocument) !== persistedSnapshotRef.current);
-  };
-
-  const handleGraphSidebarResizeStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = graphSidebarWidth;
-    setGraphSidebarResizing(true);
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const nextWidth = startWidth + moveEvent.clientX - startX;
-      setGraphSidebarWidth(clamp(nextWidth, GRAPH_SIDEBAR_MIN_WIDTH, GRAPH_SIDEBAR_MAX_WIDTH));
-    };
-    const handlePointerUp = () => {
-      setGraphSidebarResizing(false);
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
   };
 
   const clampDocumentToViewport = (nextDocument: DocumentFile) => {
@@ -1549,7 +1517,7 @@ export const App = () => {
         }));
         setManagedAssetUrls((current) => ({
           ...current,
-          [assetId]: imported.fileUrl,
+          [assetId]: imported.filePath,
         }));
 
         // Insert attachment inline into text node
@@ -1612,20 +1580,24 @@ export const App = () => {
     if (asset.storage === "managed" && asset.relativePath && currentSavePath) {
       if (window.electronApp?.resolveAttachmentUrl) {
         try {
-          const url = await window.electronApp.resolveAttachmentUrl({
+          const filePath = await window.electronApp.resolveAttachmentUrl({
             documentPath: currentSavePath,
             relativePath: asset.relativePath,
           });
-          if (url && window.electronApp?.openExternal) {
-            window.electronApp.openExternal(url);
+          const openPath = resolveManagedAttachmentOpenPath(filePath, managedAssetUrls[assetId]);
+          if (openPath && window.electronApp?.openPath) {
+            await window.electronApp.openPath(openPath);
             return;
           }
         } catch { /* fall through */ }
       }
-      // Fallback: use cached fileUrl
-      const cachedUrl = managedAssetUrls[assetId];
-      if (cachedUrl && window.electronApp?.openExternal) {
-        window.electronApp.openExternal(cachedUrl);
+      const cachedFilePath = resolveManagedAttachmentOpenPath(null, managedAssetUrls[assetId]);
+      if (cachedFilePath) {
+        if (window.electronApp?.openPath) {
+          await window.electronApp.openPath(cachedFilePath);
+        } else if (window.electronApp?.openExternal) {
+          window.electronApp.openExternal(cachedFilePath);
+        }
         return;
       }
     }
@@ -1908,6 +1880,37 @@ export const App = () => {
     patchDocument((current) => addNodeToDocument(current, node));
     setSelectedNodeIds([node.id]);
     setEditingNodeId(null);
+  };
+
+  const handleInsertHtmlPreviewAt = (x: number, y: number, rawHtml: string, options?: { name?: string }) => {
+    if (!looksLikeHtmlSource(rawHtml)) {
+      return false;
+    }
+
+    const assetId = createAssetId();
+    const preview = createHtmlPreviewAsset(rawHtml);
+    const node = {
+      ...createImageNode(x, y, assetId, 960, 720),
+      pageIndex: activePageIndex,
+      style: {
+        kind: "html-preview",
+      },
+    };
+
+    patchDocument((current) => addImageNodeToDocument(
+      current,
+      node,
+      {
+        id: assetId,
+        type: "html",
+        mimeType: "text/html",
+        name: preview.title || options?.name || "HTML Block",
+        data: preview.html,
+      },
+    ));
+    setSelectedNodeIds([node.id]);
+    setEditingNodeId(null);
+    return true;
   };
 
   const handlePasteMarkdownAt = async (x: number, y: number) => {
@@ -2225,7 +2228,7 @@ export const App = () => {
         scope === "current-page" ? activePageIndex : undefined,
       );
       setSearchResults(results);
-      setSearchActiveIndex(Math.min(searchActiveIndex, results.length - 1));
+      setSearchActiveIndex(results.length > 0 ? Math.min(searchActiveIndex, results.length - 1) : 0);
       return;
     }
 
@@ -2300,11 +2303,8 @@ export const App = () => {
   }, []);
 
   const handleSearchResultClick = useCallback((result: SearchResult) => {
-    // Retain the query for text highlighting, then clear search UI
+    // Keep the current search context visible after navigation.
     setHighlightQuery(searchQuery);
-    setSearchQuery("");
-    setSearchResults([]);
-    setSearchActiveIndex(0);
 
     if (result.scope === "workspace" && result.filePath && result.filePath !== currentSavePath) {
       // Open external file then select node — use ref to avoid ordering issue
@@ -2387,10 +2387,15 @@ export const App = () => {
       return;
     }
 
+    if (openingWorkspaceFilePath) {
+      return;
+    }
+
     if (!canDiscardUnsavedChanges(isDirty)) {
       return;
     }
 
+    setOpeningWorkspaceFilePath(filePath);
     try {
       const result = await window.electronApp.openDocumentAtPath({ filePath });
       if (!result) {
@@ -2414,6 +2419,8 @@ export const App = () => {
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "打开文件失败。");
+    } finally {
+      setOpeningWorkspaceFilePath(null);
     }
   };
 
@@ -3499,11 +3506,16 @@ export const App = () => {
     };
 
     const handlePaste = async (event: ClipboardEvent) => {
+      if (event.defaultPrevented || isEditableTarget(event.target)) {
+        return;
+      }
+
+      const pastedHtml = event.clipboardData?.getData("text/html") ?? "";
+      const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+
       if (
         editingNodeId ||
-        !selectedTextNode ||
-        event.defaultPrevented ||
-        isEditableTarget(event.target)
+        !selectedTextNode
       ) {
         return;
       }
@@ -3512,9 +3524,6 @@ export const App = () => {
       // OneNote and similar apps put both HTML and an image snapshot into the
       // clipboard; the user almost always intends to paste the rich text, not
       // the rendered image.
-      const pastedText = event.clipboardData?.getData("text/plain") ?? "";
-      const pastedHtml = event.clipboardData?.getData("text/html") ?? "";
-
       if (pastedText.trim().length > 0 || pastedHtml.length > 0) {
         event.preventDefault();
         runQuickEditCommand({
@@ -4649,6 +4658,27 @@ export const App = () => {
             onClick={() => {
               const { worldX, worldY } = canvasContextMenu;
               setCanvasContextMenu(null);
+              navigator.clipboard.readText()
+                .then((clipboardText) => {
+                  if (!looksLikeHtmlSource(clipboardText)) {
+                    setErrorMessage("剪贴板里没有可插入的 HTML 源码。");
+                    return;
+                  }
+                  handleInsertHtmlPreviewAt(worldX, worldY, clipboardText, { name: "HTML Block" });
+                })
+                .catch((error) => {
+                  setErrorMessage(error instanceof Error ? error.message : "插入 HTML 块失败。");
+                });
+            }}
+          >
+            插入 HTML 块
+          </button>
+          <button
+            type="button"
+            className="sidebar-context-menu-item"
+            onClick={() => {
+              const { worldX, worldY } = canvasContextMenu;
+              setCanvasContextMenu(null);
               handlePasteMarkdownAt(worldX, worldY).catch((error) => {
                 setErrorMessage(error instanceof Error ? error.message : "粘贴 Markdown 失败。");
               });
@@ -4868,33 +4898,14 @@ export const App = () => {
         <aside className="left-rail">
           <button
             type="button"
-            className={leftSidebarMode === "files" && !fileSidebarCollapsed ? "sidebar-menu-button left-rail-button active" : "sidebar-menu-button left-rail-button"}
+            className={!fileSidebarCollapsed ? "sidebar-menu-button left-rail-button active" : "sidebar-menu-button left-rail-button"}
             aria-label={fileSidebarCollapsed ? "展开文件侧栏" : "收起文件侧栏"}
             aria-pressed={!fileSidebarCollapsed}
-            onClick={() => {
-              setLeftSidebarMode("files");
-              setFileSidebarCollapsed((current) => (leftSidebarMode !== "files" ? false : !current));
-            }}
+            onClick={() => setFileSidebarCollapsed((current) => !current)}
           >
             <span />
             <span />
             <span />
-          </button>
-          <button
-            type="button"
-            className={leftSidebarMode === "graph" && !fileSidebarCollapsed ? "rail-graph-button left-rail-button active" : "rail-graph-button left-rail-button"}
-            aria-label={leftSidebarMode === "graph" && !fileSidebarCollapsed ? "收起网络图" : "显示网络图"}
-            aria-pressed={leftSidebarMode === "graph" && !fileSidebarCollapsed}
-            onClick={() => {
-              setLeftSidebarMode("graph");
-              setFileSidebarCollapsed((current) => (leftSidebarMode !== "graph" ? false : !current));
-            }}
-          >
-            <span className="rail-graph-dot top" />
-            <span className="rail-graph-dot middle" />
-            <span className="rail-graph-dot bottom" />
-            <span className="rail-graph-link top" />
-            <span className="rail-graph-link bottom" />
           </button>
           <button
             type="button"
@@ -4911,79 +4922,41 @@ export const App = () => {
         </aside>
 
         <div className="workspace-shell">
-        <aside
-          className={[
-            "file-sidebar",
-            fileSidebarCollapsed ? "collapsed" : "",
-            leftSidebarMode === "graph" ? "graph-resizable" : "",
-            graphSidebarResizing ? "resizing" : "",
-          ].filter(Boolean).join(" ")}
-          style={
-            !fileSidebarCollapsed && leftSidebarMode === "graph"
-              ? ({
-                  "--graph-sidebar-width": `${graphSidebarWidth}px`,
-                } as CSSProperties)
-              : undefined
-          }
-        >
-          {!fileSidebarCollapsed && leftSidebarMode === "files" ? (
-            <FileSidebar
-              entries={orderedWorkspaceEntries}
-              rootPath={workspaceRootPath}
-              currentFilePath={currentSavePath}
-              expandedDirectories={expandedDirectories}
-              loading={workspaceLoading}
-              errorMessage={workspaceError}
-              onToggleDirectory={handleToggleDirectory}
-              onOpenFile={handleOpenWorkspaceFile}
-              onMoveFileToDirectory={handleMoveWorkspaceFileToDirectory}
-              onReorderFile={handleReorderWorkspaceFile}
-              onFileContextMenu={handleFileContextMenu}
-              onDirectoryContextMenu={handleDirectoryContextMenu}
-              onBlankContextMenu={handleWorkspaceBlankContextMenu}
-              renamingFilePath={renamingFilePath}
-              renamingFileName={renamingFileName}
-              onRenamingFileNameChange={setRenamingFileName}
-              onCommitFileRename={handleCommitWorkspaceFileRename}
-              onCancelFileRename={handleCancelWorkspaceFileRename}
-              renamingDirectoryPath={renamingDirectoryPath}
-              renamingDirectoryName={renamingDirectoryName}
-              onRenamingDirectoryNameChange={setRenamingDirectoryName}
-              onCommitDirectoryRename={handleCommitWorkspaceDirectoryRename}
-              onCancelDirectoryRename={handleCancelWorkspaceDirectoryRename}
-              onRefresh={() => {
-                refreshWorkspaceEntries().catch(() => {});
-              }}
-              selectedFilePaths={selectedFilePaths}
-              onSelectFile={handleFileSelect}
-            />
-          ) : null}
-          {!fileSidebarCollapsed && leftSidebarMode === "graph" ? (
-            <>
-              <WorkspaceGraphPanel
-                documentSummaries={sidebarDocumentSummaries}
+          <aside className={fileSidebarCollapsed ? "file-sidebar collapsed" : "file-sidebar"}>
+            {!fileSidebarCollapsed ? (
+              <FileSidebar
+                entries={orderedWorkspaceEntries}
                 rootPath={workspaceRootPath}
                 currentFilePath={currentSavePath}
-                currentPageIndex={activePageIndex}
+                openingFilePath={openingWorkspaceFilePath}
+                expandedDirectories={expandedDirectories}
+                loading={workspaceLoading}
+                errorMessage={workspaceError}
+                onToggleDirectory={handleToggleDirectory}
                 onOpenFile={handleOpenWorkspaceFile}
-                onOpenPage={(filePath, pageIndex, isCurrentFile) => {
-                  if (isCurrentFile || currentSavePath === filePath) {
-                    handleSelectPage(pageIndex + 1);
-                    return;
-                  }
-
-                  void handleOpenWorkspaceFile(filePath, pageIndex);
+                onMoveFileToDirectory={handleMoveWorkspaceFileToDirectory}
+                onReorderFile={handleReorderWorkspaceFile}
+                onFileContextMenu={handleFileContextMenu}
+                onDirectoryContextMenu={handleDirectoryContextMenu}
+                onBlankContextMenu={handleWorkspaceBlankContextMenu}
+                renamingFilePath={renamingFilePath}
+                renamingFileName={renamingFileName}
+                onRenamingFileNameChange={setRenamingFileName}
+                onCommitFileRename={handleCommitWorkspaceFileRename}
+                onCancelFileRename={handleCancelWorkspaceFileRename}
+                renamingDirectoryPath={renamingDirectoryPath}
+                renamingDirectoryName={renamingDirectoryName}
+                onRenamingDirectoryNameChange={setRenamingDirectoryName}
+                onCommitDirectoryRename={handleCommitWorkspaceDirectoryRename}
+                onCancelDirectoryRename={handleCancelWorkspaceDirectoryRename}
+                onRefresh={() => {
+                  refreshWorkspaceEntries().catch(() => {});
                 }}
+                selectedFilePaths={selectedFilePaths}
+                onSelectFile={handleFileSelect}
               />
-              <button
-                type="button"
-                className="graph-sidebar-resize-handle"
-                aria-label="拖拽调整网络图栏宽度"
-                onPointerDown={handleGraphSidebarResizeStart}
-              />
-            </>
-          ) : null}
-        </aside>
+            ) : null}
+          </aside>
 
         <aside className={pageSidebarCollapsed ? "page-sidebar-column collapsed" : "page-sidebar-column"}>
           <section className="sidebar-panel page-sidebar">

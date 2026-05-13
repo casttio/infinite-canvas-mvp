@@ -3994,6 +3994,29 @@ export const TextNode = ({
     };
   };
 
+  const openInlineAttachmentFromEvent = (event: React.MouseEvent | React.PointerEvent) => {
+    if (editing) {
+      return false;
+    }
+
+    const targetAttachment = event.target instanceof HTMLElement
+      ? event.target.closest(".text-inline-attachment-card")
+      : null;
+    if (!targetAttachment) {
+      return false;
+    }
+
+    const assetId = targetAttachment.getAttribute("data-asset-id");
+    if (!assetId) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenAttachment?.(assetId);
+    return true;
+  };
+
   return (
     <div
       className={`canvas-node text-node ${selected ? "selected" : ""} ${editing ? "editing" : ""}`}
@@ -4038,6 +4061,9 @@ export const TextNode = ({
           if (event.button === 1) {
             armMiddlePasteGuard();
             onMiddlePanPointerDown(event);
+            return;
+          }
+          if (openInlineAttachmentFromEvent(event)) {
             return;
           }
           const target = event.target;
@@ -4150,15 +4176,8 @@ export const TextNode = ({
             event.stopPropagation();
             return;
           }
-          // Check for inline attachment card click
-          const targetAttachment = event.target instanceof HTMLElement ? event.target.closest(".text-inline-attachment-card") : null;
-          if (targetAttachment) {
-            const assetId = targetAttachment.getAttribute("data-asset-id");
-            if (assetId) {
-              event.stopPropagation();
-              onOpenAttachment?.(assetId);
-              return;
-            }
+          if (openInlineAttachmentFromEvent(event)) {
+            return;
           }
 
           // Check for rich text link click

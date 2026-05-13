@@ -15,8 +15,10 @@ const watchedElectronFiles = [
   path.join(projectRoot, "electron", "preload.cjs"),
 ];
 
-const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
-const viteCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const devServerHost = process.env.VITE_DEV_SERVER_HOST ?? "127.0.0.1";
+const devServerPort = process.env.VITE_DEV_SERVER_PORT ?? "5173";
+const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? `http://${devServerHost}:${devServerPort}`;
+const npmCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
 const electronEnv = {
   ...process.env,
   VITE_DEV_SERVER_URL: devServerUrl,
@@ -25,6 +27,7 @@ const electronEnv = {
 let isShuttingDown = false;
 let electronProcess = null;
 let restartTimer = null;
+let viteProcess = null;
 
 const waitForServer = (url, timeoutMs = 20000) =>
   new Promise((resolve, reject) => {
@@ -51,16 +54,6 @@ const waitForServer = (url, timeoutMs = 20000) =>
     tryConnect();
   });
 
-const viteProcess = spawn(
-  viteCommand,
-  ["run", "dev", "--", "--host", "127.0.0.1", "--strictPort", "--port", "5173"],
-  {
-    stdio: "inherit",
-    env: process.env,
-    shell: process.platform === "win32",
-  },
-);
-
 const shutdown = (code = 0) => {
   if (isShuttingDown) {
     return;
@@ -74,24 +67,45 @@ const shutdown = (code = 0) => {
   if (electronProcess && !electronProcess.killed) {
     electronProcess.kill("SIGTERM");
   }
-  viteProcess.kill("SIGTERM");
+  if (viteProcess && !viteProcess.killed) {
+    viteProcess.kill("SIGTERM");
+  }
   process.exit(code);
 };
 
 process.on("SIGINT", () => shutdown(130));
 process.on("SIGTERM", () => shutdown(143));
 
-viteProcess.on("exit", (code) => {
-  if (!isShuttingDown) {
-    process.exit(code ?? 1);
-  }
-});
-
+let reuseExistingDevServer = false;
 try {
-  await waitForServer(devServerUrl);
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  shutdown(1);
+  await waitForServer(devServerUrl, 1200);
+  reuseExistingDevServer = true;
+} catch {
+  viteProcess = spawn(
+    process.execPath,
+    [npmCliPath, "run", "dev", "--", "--host", devServerHost, "--strictPort", "--port", devServerPort],
+    {
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
+
+  viteProcess.on("exit", (code) => {
+    if (!isShuttingDown) {
+      process.exit(code ?? 1);
+    }
+  });
+
+  try {
+    await waitForServer(devServerUrl);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    shutdown(1);
+  }
+}
+
+if (reuseExistingDevServer) {
+  console.log(`Reusing Vite dev server at ${devServerUrl}`);
 }
 
 const electronArgs =

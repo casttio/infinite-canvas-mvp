@@ -142,7 +142,7 @@ declare global {
         mimeType: string;
         relativePath: string;
         sizeBytes: number;
-        fileUrl: string;
+        filePath: string;
       } | null>;
       resolveAttachmentUrl: (options: {
         documentPath: string;
@@ -201,6 +201,7 @@ declare global {
       isWindowAlwaysOnTop: () => Promise<boolean>;
       toggleWindowAlwaysOnTop: () => Promise<boolean>;
       openExternal: (url: string) => Promise<void>;
+      openPath: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     };
   }
 }

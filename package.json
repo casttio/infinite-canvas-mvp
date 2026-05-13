@@ -1,12 +1,13 @@
 {
   "name": "infinite-canvas-mvp",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "electron:dev": "node ./scripts/electron-dev.mjs",
+    "electron:dev:5174": "set VITE_DEV_SERVER_PORT=5174&& set VITE_DEV_SERVER_URL=http://127.0.0.1:5174&& node ./scripts/electron-dev.mjs",
     "build": "tsc -b && vite build",
     "desktop:build": "npm run build && electron-builder --linux AppImage --publish=never",
     "desktop:dir": "npm run build && electron-builder --linux dir --publish=never",
@@ -24,7 +25,6 @@
     "@tiptap/extension-text-style": "^3.22.4",
     "@tiptap/react": "^3.22.4",
     "@tiptap/starter-kit": "^3.22.4",
-    "cytoscape": "^3.33.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.24.2"

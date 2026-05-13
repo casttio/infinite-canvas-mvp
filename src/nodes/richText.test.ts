@@ -63,3 +63,58 @@ describe("rich text block styles", () => {
     expect(html).not.toContain("data-block-tag");
   });
 });
+
+describe("rich text attachments", () => {
+  it("renders managed attachments as inline attachment cards", () => {
+    const html = richTextDocToHtml(
+      {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [{ type: "image", assetId: "asset_pdf" }],
+        }],
+      },
+      {
+        asset_pdf: {
+          id: "asset_pdf",
+          type: "pdf",
+          storage: "managed",
+          mimeType: "application/pdf",
+          name: "paper.pdf",
+          relativePath: "doc.attachments/paper.pdf",
+        },
+      },
+    );
+
+    expect(html).toContain('class="text-inline-attachment-card"');
+    expect(html).toContain('data-asset-id="asset_pdf"');
+    expect(html).toContain(">PDF<");
+    expect(html).toContain("paper.pdf");
+  });
+
+  it("renders non-pdf managed files with extension badge", () => {
+    const html = richTextDocToHtml(
+      {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [{ type: "image", assetId: "asset_zip" }],
+        }],
+      },
+      {
+        asset_zip: {
+          id: "asset_zip",
+          type: "file",
+          storage: "managed",
+          mimeType: "application/zip",
+          name: "archive.zip",
+          relativePath: "doc.attachments/archive.zip",
+        },
+      },
+    );
+
+    expect(html).toContain('class="text-inline-attachment-card"');
+    expect(html).toContain(">ZIP<");
+    expect(html).toContain("archive.zip");
+  });
+});
