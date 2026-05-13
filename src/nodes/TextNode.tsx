@@ -46,7 +46,8 @@ export interface TextEditorCommand {
     | "toggle-underline"
     | "toggle-strike"
     | "insert-timeline-example"
-    | "insert-node-link";
+    | "insert-node-link"
+    | "insert-attachment";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
@@ -93,6 +94,7 @@ interface TextNodeProps {
   onResizePointerDown: (event: PointerLikeEvent, handle: ResizeHandle) => void;
   onNavigateTo?: (pageIndex: number, nodeId: string) => void;
   onNodeLinkClick?: (pageIndex: number, nodeId: string, x: number, y: number, documentPath?: string) => void;
+  onOpenAttachment?: (assetId: string) => void;
   onRequestInsertNodeLink?: (x: number, y: number) => void;
   onRequestSelectAll?: () => void;
   onSelectionFormatChange?: (format: { fontFamily: string | null; fontSize: string | null }) => void;
@@ -194,6 +196,7 @@ export const TextNode = ({
   onResizePointerDown,
   onNavigateTo,
   onNodeLinkClick,
+  onOpenAttachment,
   onRequestInsertNodeLink,
   onRequestSelectAll,
   onSelectionFormatChange,
@@ -1546,20 +1549,63 @@ export const TextNode = ({
     window.addEventListener("pointerup", handlePointerUp);
   };
   const getColumnResizeCell = (
-    event: Pick<PointerLikeEvent, "clientX">,
-    cell: HTMLTableCellElement,
+    event: Pick<PointerLikeEvent, "clientX" | "clientY">,
+    cell: HTMLTableCellElement | null,
   ) => {
-    const rect = cell.getBoundingClientRect();
-    if (Math.abs(rect.right - event.clientX) <= COLUMN_RESIZE_HIT_SLOP) {
-      return cell;
+    const editor = editorRef.current;
+    if (!editor) {
+      return null;
     }
-    if (Math.abs(rect.left - event.clientX) <= COLUMN_RESIZE_HIT_SLOP) {
-      const previousCell = cell.parentElement instanceof HTMLTableRowElement
-        ? cell.parentElement.cells.item(cell.cellIndex - 1)
-        : null;
-      return previousCell instanceof HTMLTableCellElement ? previousCell : null;
-    }
-    return null;
+    const targetAtPoint = document.elementFromPoint(event.clientX, event.clientY);
+    const targetTable = targetAtPoint instanceof Element ? targetAtPoint.closest("table") : null;
+    const directTable = cell?.closest("table") ?? (targetTable instanceof HTMLTableElement ? targetTable : null);
+    const candidateTables = directTable instanceof HTMLTableElement
+      ? [directTable]
+      : Array.from(editor.querySelectorAll("table"))
+        .filter((table): table is HTMLTableElement => table instanceof HTMLTableElement)
+        .filter((table) => {
+          const rect = table.getBoundingClientRect();
+          return event.clientX >= rect.left - COLUMN_RESIZE_HIT_SLOP
+            && event.clientX <= rect.right + COLUMN_RESIZE_HIT_SLOP
+            && event.clientY >= rect.top - COLUMN_RESIZE_HIT_SLOP
+            && event.clientY <= rect.bottom + COLUMN_RESIZE_HIT_SLOP;
+        })
+        .sort((left, right) =>
+          (left.getBoundingClientRect().width * left.getBoundingClientRect().height)
+          - (right.getBoundingClientRect().width * right.getBoundingClientRect().height));
+    const candidates: Array<{ cell: HTMLTableCellElement; distance: number }> = [];
+    candidateTables.some((candidateTable) => {
+      if (!editor.contains(candidateTable)) {
+        return false;
+      }
+      Array.from(candidateTable.rows).forEach((row) => {
+        Array.from(row.cells).forEach((currentCell) => {
+          if (!(currentCell instanceof HTMLTableCellElement)) {
+            return;
+          }
+          const rect = currentCell.getBoundingClientRect();
+          if (event.clientY < rect.top - COLUMN_RESIZE_HIT_SLOP || event.clientY > rect.bottom + COLUMN_RESIZE_HIT_SLOP) {
+            return;
+          }
+          const rightDistance = Math.abs(rect.right - event.clientX);
+          if (rightDistance <= COLUMN_RESIZE_HIT_SLOP) {
+            candidates.push({ cell: currentCell, distance: rightDistance });
+          }
+          const leftDistance = Math.abs(rect.left - event.clientX);
+          if (leftDistance <= COLUMN_RESIZE_HIT_SLOP) {
+            const previousCell = currentCell.parentElement instanceof HTMLTableRowElement
+              ? currentCell.parentElement.cells.item(currentCell.cellIndex - 1)
+              : null;
+            if (previousCell instanceof HTMLTableCellElement) {
+              candidates.push({ cell: previousCell, distance: leftDistance });
+            }
+          }
+        });
+      });
+      return candidates.length > 0;
+    });
+    candidates.sort((left, right) => left.distance - right.distance);
+    return candidates[0]?.cell ?? null;
   };
   const getTableResizeWrapper = (
     event: Pick<PointerLikeEvent, "clientX" | "clientY">,
@@ -1598,9 +1644,6 @@ export const TextNode = ({
       return null;
     }
     const rect = editor.getBoundingClientRect();
-    if (Math.abs(rect.left - event.clientX) <= NODE_RESIZE_HIT_SLOP) {
-      return "left";
-    }
     if (Math.abs(rect.right - event.clientX) <= NODE_RESIZE_HIT_SLOP) {
       return "right";
     }
@@ -1894,8 +1937,8 @@ export const TextNode = ({
           : null;
       const endCell = cell instanceof HTMLTableCellElement ? getCellLocation(cell) : null;
       const endTopBlock = getTopLevelBlockLocation(targetElement);
-      const resizeCell = cell instanceof HTMLTableCellElement && session.mode === "none"
-        ? getColumnResizeCell(moveEvent, cell)
+      const resizeCell = session.mode === "none"
+        ? getColumnResizeCell(moveEvent, cell instanceof HTMLTableCellElement ? cell : null)
         : null;
       const movedMostlyHorizontally = movedX > movedY * 1.6;
       if (resizeCell && session.startTableKey === null && movedMostlyHorizontally) {
@@ -2671,6 +2714,16 @@ export const TextNode = ({
   ) => {
     insertHtmlAndCommit(
       `<span class="text-inline-image-frame" contenteditable="false" data-asset-id="${escapeAttribute(image.assetId)}" data-w="${image.w}" data-h="${image.h}" style="width: ${image.w}px; height: ${image.h}px;"><img src="${escapeAttribute(image.data)}" alt="${escapeAttribute(image.name)}" draggable="false" /><span class="text-inline-image-resize" data-image-resize-handle="true"></span></span>`,
+      placement,
+    );
+  };
+
+  const insertAttachmentAtCaret = (
+    attachment: { assetId: string; name: string; icon: string },
+    placement: "caret" | "end" = "caret",
+  ) => {
+    insertHtmlAndCommit(
+      `<span class="text-inline-attachment-card" contenteditable="false" data-asset-id="${escapeAttribute(attachment.assetId)}"><span class="text-inline-attachment-icon">${escapeHtml(attachment.icon)}</span><span class="text-inline-attachment-name">${escapeHtml(attachment.name)}</span></span>`,
       placement,
     );
   };
@@ -3896,6 +3949,25 @@ export const TextNode = ({
       }, command.placement ?? "caret");
       return;
     }
+    if (
+      command.type === "insert-attachment" &&
+      typeof command.assetId === "string" &&
+      typeof command.name === "string"
+    ) {
+      const icon = (() => {
+        const mc = /^[^/]+\/([^+;]+)/.exec(command.data ?? "");
+        const subtype = mc?.[1]?.toLowerCase();
+        if (subtype === "pdf") return "PDF";
+        const ext = command.name?.split(".").pop()?.trim().toUpperCase();
+        return ext && ext.length <= 5 ? ext : "FILE";
+      })();
+      insertAttachmentAtCaret({
+        assetId: command.assetId,
+        name: command.name,
+        icon,
+      }, command.placement ?? "caret");
+      return;
+    }
     if (command.type === "append-text" && typeof command.text === "string" && command.text.length > 0) {
       appendTextAtEnd(command.text);
       return;
@@ -4015,7 +4087,7 @@ export const TextNode = ({
             startColumnResize(event, hoveredResizeCell);
             return;
           }
-          const resizeCell = cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null;
+          const resizeCell = getColumnResizeCell(event, cell instanceof HTMLTableCellElement ? cell : null);
           if (resizeCell) {
             onSelect();
             startColumnResize(event, resizeCell);
@@ -4078,6 +4150,17 @@ export const TextNode = ({
             event.stopPropagation();
             return;
           }
+          // Check for inline attachment card click
+          const targetAttachment = event.target instanceof HTMLElement ? event.target.closest(".text-inline-attachment-card") : null;
+          if (targetAttachment) {
+            const assetId = targetAttachment.getAttribute("data-asset-id");
+            if (assetId) {
+              event.stopPropagation();
+              onOpenAttachment?.(assetId);
+              return;
+            }
+          }
+
           // Check for rich text link click
           const targetLink = event.target instanceof HTMLElement ? event.target.closest("a.rich-text-link") : null;
           if (targetLink) {
@@ -4109,7 +4192,7 @@ export const TextNode = ({
             : target instanceof HTMLElement
               ? target.closest("td")
               : null;
-          const resizeCell = cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null;
+          const resizeCell = getColumnResizeCell(event, cell instanceof HTMLTableCellElement ? cell : null);
           if (nodeResizeHandle || resizeWrapper || resizeCell) {
             event.stopPropagation();
             return;
@@ -4127,7 +4210,7 @@ export const TextNode = ({
               ? target.closest("td")
               : null;
           const wrapper = target instanceof HTMLElement ? getTableResizeWrapper(event, target) : null;
-          const resizeCell = cell instanceof HTMLTableCellElement ? getColumnResizeCell(event, cell) : null;
+          const resizeCell = getColumnResizeCell(event, cell instanceof HTMLTableCellElement ? cell : null);
           const nodeResizeHandle = !wrapper && !resizeCell ? getNodeResizeHandle(event) : null;
           setTableResizeHover(wrapper instanceof HTMLElement ? wrapper : null);
           setColumnResizeHover(resizeCell);

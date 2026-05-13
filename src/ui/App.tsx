@@ -1530,44 +1530,71 @@ export const App = () => {
         }
 
         const assetId = createAssetId();
-        const isPdf = isPdfAttachment(imported.mimeType, imported.name);
-        const width = 360;
-        const height = 160;
-        const node = {
-          ...createImageNode(0, 0, assetId, width, height),
-          style: {
-            kind: "attachment-preview",
-          },
-        };
+        const icon = isPdfAttachment(imported.mimeType, imported.name) ? "PDF" : "FILE";
 
-        patchDocument((current) => {
-          const insertionPoint = getPageInsertionPoint(current, activePageIndex);
-          const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
-          return addImageNodeToDocument(
-            current,
-            {
-              ...node,
-              pageIndex: activePageIndex,
-              x: insertionPoint.x + offset.x,
-              y: insertionPoint.y + offset.y,
-            },
-            {
+        patchDocument((current) => ({
+          ...current,
+          assets: {
+            ...current.assets,
+            [assetId]: {
               id: assetId,
-              type: isPdf ? "pdf" : "file",
+              type: isPdfAttachment(imported.mimeType, imported.name) ? "pdf" : "file",
               storage: "managed",
               mimeType: imported.mimeType,
               name: imported.name,
               relativePath: imported.relativePath,
               sizeBytes: imported.sizeBytes,
             },
-          );
-        });
+          },
+        }));
         setManagedAssetUrls((current) => ({
           ...current,
           [assetId]: imported.fileUrl,
         }));
-        setSelectedNodeIds([node.id]);
-        setEditingNodeId(null);
+
+        // Insert attachment inline into text node
+        if (editingNodeId || selectedTextNode) {
+          const command: TextEditorCommand = {
+            type: "insert-attachment",
+            nonce: editorCommandNonceRef.current++,
+            placement: editingNodeId ? "caret" : "end",
+            assetId,
+            name: imported.name,
+            data: imported.mimeType,
+          };
+
+          if (editingNodeId) {
+            setEditorCommand(command);
+          } else {
+            runQuickEditCommand(command);
+          }
+        } else {
+          // No text node available: create a TextNode with the attachment
+          const nodeId = createNodeId("text");
+          patchDocument((current) => {
+            const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+            const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
+            return addNodeToDocument(current, {
+              id: nodeId,
+              type: "text",
+              pageIndex: activePageIndex,
+              x: insertionPoint.x + offset.x,
+              y: insertionPoint.y + offset.y,
+              w: 360,
+              h: 60,
+              z: 1,
+              style: {},
+              content: {
+                type: "doc",
+                content: [{
+                  type: "paragraph",
+                  content: [{ type: "image", assetId }],
+                }],
+              },
+            });
+          });
+          setSelectedNodeIds([nodeId]);
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "附件导入失败。");
       }
@@ -3164,27 +3191,13 @@ export const App = () => {
       const assetId = createAssetId();
       const data = await readFileAsDataUrl(file);
       const isPdf = isPdfAttachment(file.type, file.name);
-      const width = 360;
-      const height = 160;
-      const node = {
-        ...createImageNode(0, 0, assetId, width, height),
-        style: {
-          kind: "attachment-preview",
-        },
-      };
+      const icon = isPdf ? "PDF" : "FILE";
 
-      patchDocument((current) => {
-        const insertionPoint = getPageInsertionPoint(current, activePageIndex);
-        const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
-        return addImageNodeToDocument(
-          current,
-          {
-            ...node,
-            pageIndex: activePageIndex,
-            x: insertionPoint.x + offset.x,
-            y: insertionPoint.y + offset.y,
-          },
-          {
+      patchDocument((current) => ({
+        ...current,
+        assets: {
+          ...current.assets,
+          [assetId]: {
             id: assetId,
             type: isPdf ? "pdf" : "file",
             storage: "embedded",
@@ -3193,11 +3206,51 @@ export const App = () => {
             data,
             sizeBytes: file.size,
           },
-        );
-      });
+        },
+      }));
 
-      setSelectedNodeIds([node.id]);
-      setEditingNodeId(null);
+      if (editingNodeId || selectedTextNode) {
+        const command: TextEditorCommand = {
+          type: "insert-attachment",
+          nonce: editorCommandNonceRef.current++,
+          placement: editingNodeId ? "caret" : "end",
+          assetId,
+          name: file.name,
+          data: file.type || "application/octet-stream",
+        };
+
+        if (editingNodeId) {
+          setEditorCommand(command);
+        } else {
+          runQuickEditCommand(command);
+        }
+      } else {
+        // No text node available: create a TextNode with the attachment
+        const nodeId = createNodeId("text");
+        patchDocument((current) => {
+          const insertionPoint = getPageInsertionPoint(current, activePageIndex);
+          const offset = getInsertOffset(current.nodes.filter((node) => node.pageIndex === activePageIndex).length);
+          return addNodeToDocument(current, {
+            id: nodeId,
+            type: "text",
+            pageIndex: activePageIndex,
+            x: insertionPoint.x + offset.x,
+            y: insertionPoint.y + offset.y,
+            w: 360,
+            h: 60,
+            z: 1,
+            style: {},
+            content: {
+              type: "doc",
+              content: [{
+                type: "paragraph",
+                content: [{ type: "image", assetId }],
+              }],
+            },
+          });
+        });
+        setSelectedNodeIds([nodeId]);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "附件读取失败。");
     }
@@ -5412,6 +5465,7 @@ export const App = () => {
                       selectNode(nodeId);
                     }}
                     onNodeLinkClick={handleNodeLinkClick}
+                    onOpenAttachment={handleOpenAttachment}
                     onRequestInsertNodeLink={(x, y) => node.id === editingNodeId && handleRequestInsertNodeLink(node.id, x, y)}
                     onRequestSelectAll={() => {
                       const pageNodeIds = documentFile.nodes

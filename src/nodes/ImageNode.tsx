@@ -40,6 +40,7 @@ export const ImageNode = ({
 
   const handleOpenAttachment = (event: React.MouseEvent) => {
     if (isAttachment && onOpenAttachment) {
+      event.preventDefault();
       event.stopPropagation();
       onOpenAttachment(node.assetId);
     }
@@ -79,7 +80,7 @@ export const ImageNode = ({
         />
       </div>
     ) : isAttachment ? (
-      <div className="attachment-card" aria-label={asset.name} onClick={handleOpenAttachment}>
+      <div className="attachment-card" aria-label={asset.name} onContextMenu={handleOpenAttachment}>
         <div className="attachment-card-icon">{attachmentBadge(asset)}</div>
         <div className="attachment-card-meta">
           <strong className="attachment-card-name">{asset.name}</strong>

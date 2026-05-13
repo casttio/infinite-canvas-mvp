@@ -2527,7 +2527,7 @@ button:disabled {
   min-height: 24px;
   padding: 0 4px;
   vertical-align: top;
-  border: 1px solid rgba(36, 33, 31, 0.18);
+  border: 1.5px solid rgba(36, 33, 31, 0.34);
   outline: none;
   overflow: hidden;
   word-break: break-word;
@@ -2544,9 +2544,8 @@ button:disabled {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  margin: 0;
-  min-height: 19.55px;
-  line-height: 19.55px;
+  margin: 0.6em 0;
+  line-height: 1.4;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -2771,6 +2770,52 @@ button:disabled {
   border-radius: 12px;
   background: rgba(168, 34, 34, 0.10);
   color: #7f1d1d;
+}
+
+.text-inline-attachment-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 2px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.text-inline-attachment-card:hover {
+  background: var(--bg-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.text-inline-attachment-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--text-main);
+  color: var(--bg-surface);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.text-inline-attachment-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
 }
 
 .image-node {

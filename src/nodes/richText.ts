@@ -35,6 +35,16 @@ const createEmptyParagraph = (): RichTextParagraph => ({
 });
 
 const EMPTY_PARAGRAPH_BLOCK_HTML = `<div class="text-block text-block-paragraph" data-block-kind="paragraph"><p><br /></p></div>`;
+
+const isAttachmentAsset = (asset: { type: string; storage?: string } | undefined) =>
+  asset && (asset.type === "pdf" || asset.type === "file" || asset.storage === "managed");
+
+const attachmentBadgeLabel = (asset: { type: string; name: string }) => {
+  if (asset.type === "pdf") return "PDF";
+  const extension = asset.name.split(".").pop()?.trim().toUpperCase();
+  return extension && extension.length <= 5 ? extension : "FILE";
+};
+
 const HEADING_FONT_SIZES: Record<string, string> = {
   h1: "32px",
   h2: "28px",
@@ -168,6 +178,11 @@ const inlineToHtml = (inline: RichTextInline, assets: AssetMap = {}, highlightQu
       styleEntries.length > 0 ? `style="${styleEntries.join(" ")}"` : "",
     ].filter(Boolean).join(" ");
 
+    // Attachment: render as a fixed-size inline card
+    if (isAttachmentAsset(asset)) {
+      return `<span class="text-inline-attachment-card" contenteditable="false" data-asset-id="${escapeAttribute(inline.assetId)}"><span class="text-inline-attachment-icon">${escapeHtml(attachmentBadgeLabel(asset!))}</span><span class="text-inline-attachment-name">${escapeHtml(asset!.name)}</span></span>`;
+    }
+
     if (!asset || asset.type !== "image" || !asset.data) {
       return `<span class="text-inline-image-missing" data-asset-id="${escapeAttribute(inline.assetId)}" ${sizeAttributes}>图片资源缺失</span>`;
     }
@@ -255,7 +270,10 @@ const blocksToHtml = (blocks: RichTextBlock[], assets: AssetMap = {}, tableDepth
   blocks.map((block) => blockToHtml(block, assets, tableDepth, highlightQuery)).join("");
 
 export const createRichTextTableHtml = (rows = 2, columns = 2) =>
-  `<div class="text-block text-block-table-wrap" data-block-kind="table"><table class="text-block-table"><tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => createEmptyTableCellHtml()).join("")}</tr>`).join("")}</tbody></table></div>`;
+  wrapRichTextTableHtml(
+    `<colgroup>${Array.from({ length: columns }, () => '<col style="width: 160px;" />').join("")}</colgroup><tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => createEmptyTableCellHtml()).join("")}</tr>`).join("")}</tbody>`,
+    { colWidths: Array(columns).fill(160) },
+  );
 
 export const wrapRichTextTableHtml = (tableInnerHtml: string, options?: { width?: number; colWidths?: number[] }) => {
   const colWidths = Array.isArray(options?.colWidths)
@@ -465,6 +483,14 @@ const appendInlineNode = (node: Node, content: RichTextInline[]) => {
     return;
   }
 
+  if (node.classList.contains("text-inline-attachment-card")) {
+    const assetId = node.getAttribute("data-asset-id");
+    if (assetId) {
+      content.push({ type: "image", assetId });
+    }
+    return;
+  }
+
   if (node.classList.contains("text-inline-image-frame") || node.classList.contains("text-inline-image-missing")) {
     const assetId = node.getAttribute("data-asset-id");
     if (assetId) {
@@ -524,6 +550,28 @@ const isTableCellContentElement = (node: Node): node is HTMLDivElement =>
 const isResizeHandleElement = (node: Node): node is HTMLElement =>
   node instanceof HTMLElement &&
   node.dataset.tableResizeHandle === "true";
+
+const hasParseableContent = (nodes: Node[]) =>
+  nodes.some((node) => {
+    if (isResizeHandleElement(node)) {
+      return false;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return (node.textContent ?? "").trim().length > 0;
+    }
+
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+
+    if (node.tagName.toLowerCase() === "br") {
+      return true;
+    }
+
+    return (node.textContent ?? "").trim().length > 0
+      || node.querySelector("img, table, .text-inline-image-frame, .text-inline-attachment-card") !== null;
+  });
 
 const getDirectTableRows = (table: HTMLTableElement) => {
   const rows: HTMLTableRowElement[] = [];
@@ -668,9 +716,25 @@ const parseBlocksFromNodes = (nodes: Node[]): RichTextBlock[] => {
 
     if (isTableWrapperElement(node)) {
       flushInlineBuffer();
-      const table = Array.from(node.children).find((child) => child instanceof HTMLTableElement);
-      if (table instanceof HTMLTableElement) {
-        blocks.push(tableFromElement(table, readTableWidth(node), readTableColumnWidths(node, table)));
+      let wrapperBuffer: Node[] = [];
+      Array.from(node.childNodes).forEach((child) => {
+        if (isResizeHandleElement(child)) {
+          return;
+        }
+
+        if (child instanceof HTMLTableElement) {
+          if (hasParseableContent(wrapperBuffer)) {
+            blocks.push(...parseBlocksFromNodes(wrapperBuffer));
+          }
+          wrapperBuffer = [];
+          blocks.push(tableFromElement(child, readTableWidth(node), readTableColumnWidths(node, child)));
+          return;
+        }
+
+        wrapperBuffer.push(child);
+      });
+      if (hasParseableContent(wrapperBuffer)) {
+        blocks.push(...parseBlocksFromNodes(wrapperBuffer));
       }
       return;
     }
