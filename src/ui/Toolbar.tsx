@@ -116,6 +116,7 @@ interface ToolbarProps {
   canRedo: boolean;
   canInsertTable: boolean;
   canInsertTableColumn: boolean;
+  canClearEmptyLines: boolean;
   canFormatText: boolean;
   canGenerateTimeline: boolean;
   selectionFontFamily?: string | null;
@@ -141,6 +142,7 @@ interface ToolbarProps {
   onInsertTable: () => void;
   onGenerateTimeline: () => void;
   onInsertTimelineExample: () => void;
+  onClearEmptyLines: () => void;
   onInsertTableColumn: () => void;
   onInsertTableColumnLeft: () => void;
   onDeleteTableColumn: () => void;
@@ -188,6 +190,7 @@ export const Toolbar = ({
   canRedo,
   canInsertTable,
   canInsertTableColumn,
+  canClearEmptyLines,
   canFormatText,
   canGenerateTimeline,
   onNewDocument,
@@ -211,6 +214,7 @@ export const Toolbar = ({
   onInsertTable,
   onGenerateTimeline,
   onInsertTimelineExample,
+  onClearEmptyLines,
   onInsertTableColumn,
   onInsertTableColumnLeft,
   onDeleteTableColumn,
@@ -714,6 +718,15 @@ export const Toolbar = ({
             onClick={onInsertTimelineExample}
           >
             时间线范例
+          </button>
+          <button
+            type="button"
+            className="toolbar-button"
+            disabled={!canClearEmptyLines}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onClearEmptyLines}
+          >
+            清空行
           </button>
         </div>
       );

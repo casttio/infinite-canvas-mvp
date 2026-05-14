@@ -40,6 +40,7 @@ import type { TextEditorCommand } from "../nodes/TextNode";
 import { generateTimelineHtml, getTimelineSize } from "../timeline/generateTimeline";
 import { parseTableToTimelineRows } from "../timeline/parseTable";
 import { parseMarkdownToRichTextDoc } from "../markdown/parseMarkdown";
+import { clearEmptyParagraphs } from "../model/textCleanup";
 import { FileSidebar, getDisplayFileName } from "./FileSidebar";
 import { resolveManagedAttachmentOpenPath } from "./attachmentPaths";
 import { Toolbar } from "./Toolbar";
@@ -1654,6 +1655,18 @@ export const App = () => {
       placement: "end",
       nonce: editorCommandNonceRef.current++,
     });
+  };
+
+  const handleClearEmptyLines = () => {
+    if (editingNodeId) {
+      setEditorCommand({
+        type: "clear-empty-lines",
+        nonce: editorCommandNonceRef.current++,
+      });
+      return;
+    }
+
+    updateSelectedTextNodes((content) => clearEmptyParagraphs(content));
   };
 
   const handleInsertTableColumn = () => {
@@ -4225,6 +4238,7 @@ export const App = () => {
           canRedo={historyFutureRef.current.length > 0}
           canInsertTable={editingNodeId !== null || !!selectedTextNode}
           canInsertTableColumn={editingNodeId !== null}
+          canClearEmptyLines={editingNodeId !== null || hasSelectedTextNodes}
           canFormatText={editingNodeId !== null || hasSelectedTextNodes}
           canGenerateTimeline={selectedTextNodeHasTable}
           onNewDocument={handleNewDocument}
@@ -4256,6 +4270,7 @@ export const App = () => {
           onInsertTable={handleInsertTable}
           onGenerateTimeline={handleGenerateTimeline}
           onInsertTimelineExample={handleInsertTimelineExample}
+          onClearEmptyLines={handleClearEmptyLines}
           onInsertTableColumn={handleInsertTableColumn}
           onInsertTableColumnLeft={handleInsertTableColumnLeft}
           onDeleteTableColumn={handleDeleteTableColumn}

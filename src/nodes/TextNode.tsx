@@ -17,6 +17,7 @@ import {
   wrapRichTextTableHtml,
   wrapTableCellContentHtml,
 } from "./richText";
+import { clearEmptyParagraphs } from "../model/textCleanup";
 const escapeAttribute = (value: string) =>
   value
     .replaceAll("&", "&amp;")
@@ -47,7 +48,8 @@ export interface TextEditorCommand {
     | "toggle-strike"
     | "insert-timeline-example"
     | "insert-node-link"
-    | "insert-attachment";
+    | "insert-attachment"
+    | "clear-empty-lines";
   nonce: number;
   placement?: "caret" | "end";
   text?: string;
@@ -3970,6 +3972,17 @@ export const TextNode = ({
     }
     if (command.type === "append-text" && typeof command.text === "string" && command.text.length > 0) {
       appendTextAtEnd(command.text);
+      return;
+    }
+    if (command.type === "clear-empty-lines") {
+      const cleaned = htmlToRichTextDoc(editorRef.current?.innerHTML ?? draftHtmlRef.current);
+      const nextDoc = clearEmptyParagraphs(cleaned);
+      draftHtmlRef.current = richTextDocToHtml(nextDoc, assets);
+      if (editorRef.current) {
+        editorRef.current.innerHTML = draftHtmlRef.current;
+      }
+      onDraftChange(nextDoc, { history: "checkpoint" });
+      syncDimensionsToContent();
       return;
     }
     if (
